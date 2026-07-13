@@ -1,0 +1,40 @@
+# Generated data and artifacts
+data/*
+!data/processed/
+data/processed/*
+!data/processed/mobilitybench/
+!data/processed/mobilitybench/**
+data/processed/mobilitybench/poi_catalog_from_sandbox.csv
+models/
+outputs/
+
+# Large array, table, and model artifacts
+*.npy
+*.npz
+*.parquet
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Logs and caches
+*.log
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.cache/
+
+# Large generated report tables. Keep curated Markdown reports and small metrics CSVs.
+reports/*.csv
+!reports/cau_pilot_metrics.csv
+!reports/cau_rqvae_ppt_metrics.csv
+!reports/cau_rqvae_training_curves.csv
+
+# Local environments and editor files
+.env
+.venv/
+venv/
+.DS_Store
+.agents/
+.codex/
