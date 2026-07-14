@@ -22,7 +22,7 @@ import pandas as pd
 import torch
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -53,8 +53,8 @@ def load_script_module(path: Path, name: str) -> Any:
     return module
 
 
-CAU_TRAIN = load_script_module(ROOT / "scripts" / "08_train_cau_rqvae.py", "cau_train_reuse")
-SID_EXPORT = load_script_module(ROOT / "scripts" / "05_export_and_eval_sid.py", "sid_export_reuse")
+CAU_TRAIN = load_script_module(ROOT / "scripts" / "sid" / "08_train_cau_rqvae.py", "cau_train_reuse")
+SID_EXPORT = load_script_module(ROOT / "scripts" / "sid" / "05_export_and_eval_sid.py", "sid_export_reuse")
 
 
 class Tee:
@@ -229,10 +229,10 @@ def write_checksums(path: Path) -> None:
     files = [
         "src/rqvae.py",
         "src/cau_labels.py",
-        "scripts/07_build_cau_labels.py",
-        "scripts/08_train_cau_rqvae.py",
-        "scripts/09_train_cau_final.py",
-        "scripts/05_export_and_eval_sid.py",
+        "scripts/sid/07_build_cau_labels.py",
+        "scripts/sid/08_train_cau_rqvae.py",
+        "scripts/sid/09_train_cau_final.py",
+        "scripts/sid/05_export_and_eval_sid.py",
         "configs/rqvae_cau.yaml",
     ]
     lines = []

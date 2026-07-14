@@ -14,13 +14,14 @@
 ```text
 configs/                         训练与实验配置
 src/                             可复用实现
-scripts/                         数据、特征、训练与评估入口
+scripts/data/                    数据准备、处理与校验入口
+scripts/sid/                     Embedding、RQ-VAE、SID 与 CAU 入口
+scripts/eval/                    检索评估入口
 docs/                            长期维护文档
 reports/metrics/                 少量稳定历史指标
 data/processed/mobilitybench/    公开 baseline
 models/                          本地模型（Git 忽略）
 outputs/                         实验输出（Git 忽略）
-_local_legacy/                   旧本地产物（Git 忽略）
 ```
 
 ## 环境安装
@@ -38,17 +39,17 @@ python -m pip install -r requirements.txt
 先验证公开 baseline：
 
 ```bash
-python scripts/validate_mobilitybench_data.py
+python scripts/data/validate_mobilitybench_data.py
 ```
 
 完整 POI 侧流水线入口如下；真实数据接入后应先更新字段契约和配置，并先运行小样本 smoke test：
 
 ```bash
-python scripts/01_build_poi_sid_train_data.py
-python scripts/02_embed_poi_text.py --model models/Qwen3-Embedding-0.6B --device auto
-python scripts/03_build_geo_features.py
-python scripts/04_train_rqvae.py --config configs/rqvae_train.yaml --mode semantic
-python scripts/05_export_and_eval_sid.py --mode semantic
+python scripts/sid/01_build_poi_sid_train_data.py
+python scripts/sid/02_embed_poi_text.py --model models/Qwen3-Embedding-0.6B --device auto
+python scripts/sid/03_build_geo_features.py
+python scripts/sid/04_train_rqvae.py --config configs/rqvae_train.yaml --mode semantic
+python scripts/sid/05_export_and_eval_sid.py --mode semantic
 ```
 
 上述命令会向 `data/embeddings/`、`data/geo/`、`data/rqvae/`、`data/sid/` 和 `outputs/` 写入被 Git 忽略的产物。不要将模型、checkpoint、Embedding、NPY、Parquet 或真实业务数据加入 Git。

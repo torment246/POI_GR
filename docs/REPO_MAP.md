@@ -8,13 +8,14 @@ AGENTS.md                         Codex collaboration rules
 requirements.txt                  Python dependencies
 configs/                          experiment configuration
 src/                              reusable library modules
-scripts/                          command-line pipeline entry points
+scripts/data/                     dataset preparation, processing and validation
+scripts/sid/                      POI feature, RQ-VAE, SID and CAU pipelines
+scripts/eval/                     retrieval evaluation
 docs/                             long-lived project documentation
 reports/metrics/                  small stable historical metrics
 data/processed/mobilitybench/     tracked public baseline
 models/                           ignored local models
 outputs/                          ignored generated experiment outputs
-_local_legacy/                    ignored inactive local artifacts
 ```
 
 ## Source Modules
@@ -28,9 +29,9 @@ _local_legacy/                    ignored inactive local artifacts
 
 ## Script Groups
 
-- Dataset layer: `process_*.py`, `prepare_*.py`, `analyze_all_datasets.py`, `validate_mobilitybench_data.py`.
-- POI SID pipeline: `01_build_poi_sid_train_data.py` through `06_visualize_sid_quality.py`.
-- CAU pipeline: `07_build_cau_labels.py`, `08_train_cau_rqvae.py`, `09_train_cau_final.py`.
-- Retrieval evaluation: `scripts/evaluate.py`.
+- Dataset layer: `scripts/data/process_*.py`, `scripts/data/prepare_*.py`, `scripts/data/analyze_all_datasets.py`, `scripts/data/validate_mobilitybench_data.py`.
+- POI SID pipeline: `scripts/sid/01_build_poi_sid_train_data.py` through `scripts/sid/06_visualize_sid_quality.py`.
+- CAU pipeline: `scripts/sid/07_build_cau_labels.py`, `scripts/sid/08_train_cau_rqvae.py`, `scripts/sid/09_train_cau_final.py`.
+- Retrieval evaluation: `scripts/eval/evaluate.py`.
 
 Generated reports and figures default to ignored `outputs/` paths. New scripts should follow the same convention and expose configurable input/output paths.

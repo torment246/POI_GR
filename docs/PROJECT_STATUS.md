@@ -38,7 +38,7 @@ MobilityBench is useful for code validation and public comparison, not as a subs
 
 ## Artifact Status
 
-- Old local `models/`, Embedding, NPY, checkpoint, SID and output content is retained under ignored `_local_legacy/` only.
+- Old local models, data copies and experiment outputs are not retained in the active workspace; historical records remain on the previous server.
 - Active generated directories are empty until a new controlled run creates artifacts.
 - Historical RQ-VAE/CAU results remain summarized in `docs/EXPERIMENT_LOG.md`; their old artifacts are not guaranteed to exist or remain compatible.
 - Do not resume the old CAU checkpoint. Rebuild features and retrain after the Didi schema and data contract are finalized.

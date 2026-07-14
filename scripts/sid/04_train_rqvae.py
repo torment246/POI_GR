@@ -14,7 +14,7 @@ try:
 except ImportError as exc:
     raise SystemExit("PyTorch is required. Please install torch: pip install torch") from exc
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from rqvae import RQVAE  # noqa: E402

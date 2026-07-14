@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from poi_genret.evaluation import evaluate_run, rows_to_qrels, rows_to_run
@@ -22,7 +22,11 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--qrels", type=Path, default=ROOT / "data/processed/qrels.csv")
+    parser.add_argument(
+        "--qrels",
+        type=Path,
+        default=ROOT / "data/processed/mobilitybench/qrels.csv",
+    )
     parser.add_argument(
         "--run",
         type=Path,
@@ -42,4 +46,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

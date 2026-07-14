@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def log(message: str) -> None:
@@ -33,7 +33,12 @@ def run_step(args: list[str]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-dir", type=Path, default=ROOT / "data/raw")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "data/processed")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=ROOT / "outputs/processed",
+        help="Generated dataset directory (recreated on each run).",
+    )
     parser.add_argument("--report-dir", type=Path, default=ROOT / "outputs/data_report")
     parser.add_argument("--split-ratio", default="0.8,0.1,0.1")
     parser.add_argument("--seed", type=int, default=42)
@@ -69,10 +74,10 @@ def main() -> None:
     if args.max_rows is not None:
         common.extend(["--max-rows", str(args.max_rows)])
 
-    run_step([sys.executable, str(ROOT / "scripts/process_llm4poi.py"), *common])
-    run_step([sys.executable, str(ROOT / "scripts/process_yelp.py"), *common])
-    run_step([sys.executable, str(ROOT / "scripts/process_mobilitybench.py"), *common])
-    run_step([sys.executable, str(ROOT / "scripts/analyze_all_datasets.py"), *common])
+    run_step([sys.executable, str(ROOT / "scripts/data/process_llm4poi.py"), *common])
+    run_step([sys.executable, str(ROOT / "scripts/data/process_yelp.py"), *common])
+    run_step([sys.executable, str(ROOT / "scripts/data/process_mobilitybench.py"), *common])
+    run_step([sys.executable, str(ROOT / "scripts/data/analyze_all_datasets.py"), *common])
     remove_named_artifacts(args.output_dir)
     remove_named_artifacts(args.report_dir.parent)
 

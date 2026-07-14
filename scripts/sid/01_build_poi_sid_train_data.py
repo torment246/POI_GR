@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from data_utils import ensure_columns, ensure_dir, ensure_parent_dir, format_rate, joined_examples  # noqa: E402

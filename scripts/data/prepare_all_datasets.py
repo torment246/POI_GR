@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from poi_genret.schema import QREL_COLUMNS, QUERY_COLUMNS, read_csv_if_exists, write_csv  # noqa: E402
@@ -113,10 +113,10 @@ def main() -> None:
     common = ["--raw-dir", str(args.raw_dir), "--output-dir", str(args.output_dir), "--report-dir", str(args.report_dir), "--seed", str(args.seed)]
     max_rows = ["--max-rows", str(args.max_rows)] if args.max_rows is not None else []
 
-    run_step([sys.executable, str(ROOT / "scripts/prepare_mvp_data.py"), *common, *max_rows])
-    run_step([sys.executable, str(ROOT / "scripts/prepare_mobilitybench_data.py"), *common, *max_rows])
+    run_step([sys.executable, str(ROOT / "scripts/data/prepare_mvp_data.py"), *common, *max_rows])
+    run_step([sys.executable, str(ROOT / "scripts/data/prepare_mobilitybench_data.py"), *common, *max_rows])
     manifest = write_splits(args.output_dir, args.seed)
-    run_step([sys.executable, str(ROOT / "scripts/analyze_datasets.py"), *common, *max_rows])
+    run_step([sys.executable, str(ROOT / "scripts/data/analyze_datasets.py"), *common, *max_rows])
 
     report_path = args.report_dir / "dataset_report.md"
     summary = {

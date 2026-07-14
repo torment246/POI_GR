@@ -13,7 +13,7 @@
 - Raw/private datasets, local model directories and downloaded weights.
 - Embedding arrays, NPY/NPZ, generated Parquet, checkpoints and ONNX/binary model files.
 - Training outputs, logs, generated reports, plots and temporary analysis tables.
-- `_local_legacy/`, which only retains old local artifacts outside the active pipeline.
+- Ad-hoc legacy copies inside the repository; use approved external archival storage instead.
 
 ## Stable Data Contract
 
@@ -45,7 +45,6 @@ Tracked MobilityBench files live in `data/processed/mobilitybench/`. They suppor
 | `data/rqvae/` | model input arrays | ignored |
 | `data/sid/` | SID indices/mappings | ignored |
 | `outputs/` | checkpoints, logs, metrics, reports and figures | ignored |
-| `_local_legacy/` | inactive historical local artifacts | ignored |
 
 ## Regeneration and Backup
 
