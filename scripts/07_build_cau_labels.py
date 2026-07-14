@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--report",
-        default="reports/cau_rqvae_label_gate1.md",
+        default="outputs/reports/cau_rqvae_label_gate1.md",
         help="Output Gate 1 report.",
     )
     parser.add_argument("--seed", type=int, default=42)

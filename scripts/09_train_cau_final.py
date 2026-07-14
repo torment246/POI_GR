@@ -477,7 +477,7 @@ def export_formal_cau(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     formal_indices = ROOT / "data/sid/poi_sid_indices_cau.npy"
     formal_mapping = ROOT / "data/sid/poi_sid_mapping_cau.parquet"
-    formal_report = ROOT / "reports/sid_quality_cau.md"
+    formal_report = output_dir / "sid_quality_cau.md"
     final_indices_copy = output_dir / "poi_sid_indices_cau.npy"
     final_mapping_copy = output_dir / "poi_sid_mapping_cau.parquet"
     guard_absent([formal_indices, formal_mapping, formal_report, final_indices_copy, final_mapping_copy], "formal CAU export")
@@ -507,7 +507,7 @@ def export_formal_cau(
         rqvae_input_path=ROOT / config["data"]["rqvae_input_semantic_npy"],
         mapping_path=formal_mapping,
         indices_path=formal_indices,
-        report_dir=ROOT / "reports",
+        report_dir=output_dir / "sid_reports",
         qrels_path=ROOT / "data/processed/mobilitybench/qrels.csv",
         candidates_path=ROOT / "data/processed/mobilitybench/candidates.csv",
         max_report_groups=max_report_groups,
@@ -517,7 +517,12 @@ def export_formal_cau(
     return flat, metrics
 
 
-def append_final_metrics(pilot_metrics_path: Path, final_flat: dict[str, Any], best_train_row: dict[str, Any]) -> pd.DataFrame:
+def append_final_metrics(
+    pilot_metrics_path: Path,
+    final_flat: dict[str, Any],
+    best_train_row: dict[str, Any],
+    output_dir: Path,
+) -> pd.DataFrame:
     df = pd.read_csv(pilot_metrics_path, encoding="utf-8-sig")
     baseline = df.loc[df["run"] == "semantic_baseline"].iloc[0]
     final: dict[str, Any] = {col: "" for col in df.columns}
@@ -526,8 +531,8 @@ def append_final_metrics(pilot_metrics_path: Path, final_flat: dict[str, Any], b
             "run": "CAU_Final_P1",
             "lambda_tag": 0.025,
             "lambda_unique": 0.10,
-            "checkpoint": "outputs/experiments/cau_rqvae/final_p1/best_sid_metrics.pt",
-            "sid_report": "reports/sid_quality_cau.md",
+            "checkpoint": str((output_dir / "best_sid_metrics.pt").relative_to(ROOT)),
+            "sid_report": str((output_dir / "sid_quality_cau.md").relative_to(ROOT)),
             "unique_sid_rate": final_flat["unique_sid_rate"],
             "unique_pid_rate": final_flat["unique_pid_rate"],
             "sid_collision_group_count": final_flat["sid_collision_group_count"],
@@ -578,7 +583,7 @@ def append_final_metrics(pilot_metrics_path: Path, final_flat: dict[str, Any], b
 
 
 def write_compare_reports(metrics_df: pd.DataFrame, final_flat: dict[str, Any], output_dir: Path) -> None:
-    metrics_path = ROOT / "reports/cau_rqvae_ppt_metrics.csv"
+    metrics_path = output_dir / "cau_rqvae_metrics.csv"
     metrics_df.to_csv(metrics_path, index=False, encoding="utf-8-sig")
 
     selected_cols = [
@@ -607,11 +612,11 @@ def write_compare_reports(metrics_df: pd.DataFrame, final_flat: dict[str, Any], 
         "",
         "## Formal CAU Output",
         "",
-        "- checkpoint: `outputs/experiments/cau_rqvae/final_p1/best_sid_metrics.pt`",
+        f"- checkpoint: `{(output_dir / 'best_sid_metrics.pt').relative_to(ROOT)}`",
         "- SID indices: `data/sid/poi_sid_indices_cau.npy`",
         "- SID mapping: `data/sid/poi_sid_mapping_cau.parquet`",
-        "- SID report: `reports/sid_quality_cau.md`",
-        "- experiment copy: `outputs/experiments/cau_rqvae/final_p1/poi_sid_indices_cau.npy`, `outputs/experiments/cau_rqvae/final_p1/poi_sid_mapping_cau.parquet`",
+        f"- SID report: `{(output_dir / 'sid_quality_cau.md').relative_to(ROOT)}`",
+        f"- experiment copies: `{(output_dir / 'poi_sid_indices_cau.npy').relative_to(ROOT)}`, `{(output_dir / 'poi_sid_mapping_cau.parquet').relative_to(ROOT)}`",
         "",
         "## Final Notes",
         "",
@@ -621,7 +626,7 @@ def write_compare_reports(metrics_df: pd.DataFrame, final_flat: dict[str, Any], 
         f"- Final unique SID rate: {format_float(final_flat['unique_sid_rate'])}",
         "",
     ]
-    (ROOT / "reports/sid_quality_cau_compare.md").write_text("\n".join(compare_lines), encoding="utf-8")
+    (output_dir / "sid_quality_cau_compare.md").write_text("\n".join(compare_lines), encoding="utf-8")
 
 
 def write_checkpoint_selection_report(
@@ -666,7 +671,7 @@ def write_checkpoint_selection_report(
                 "## Decision",
                 "",
                 f"- selected_epoch: {best_sid_row['epoch']}",
-                "- selected_checkpoint: `outputs/experiments/cau_rqvae/final_p1/best_sid_metrics.pt`",
+                f"- selected_checkpoint: `{(output_dir / 'best_sid_metrics.pt').relative_to(ROOT)}`",
                 f"- qrels_sid_collision_rate: {format_float(best_sid_row['qrels_sid_collision_rate'])}",
                 f"- unique_sid_rate: {format_float(best_sid_row['unique_sid_rate'])}",
                 f"- prefix1_semantic_purity: {format_float(best_sid_row['prefix1_semantic_purity'])}",
@@ -674,7 +679,7 @@ def write_checkpoint_selection_report(
                 "",
             ]
         )
-    (ROOT / "reports/cau_rqvae_checkpoint_selection.md").write_text("\n".join(lines), encoding="utf-8")
+    (output_dir / "checkpoint_selection.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def group_summary(df: pd.DataFrame, poi_ids: set[str], key_col: str) -> dict[str, Any]:
@@ -812,7 +817,7 @@ def write_cluster_examples(output_dir: Path) -> None:
         lines.append(f"- improvement: {case['improvement']}")
         lines.append(f"- trade_off: {case['trade_off']}")
         lines.append("")
-    (ROOT / "reports/cau_rqvae_cluster_examples.md").write_text("\n".join(lines), encoding="utf-8")
+    (output_dir / "cluster_examples.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def write_readme(
@@ -880,7 +885,7 @@ def write_readme(
     (output_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def write_experiment_report(summary: dict[str, Any], metrics_df: pd.DataFrame | None) -> None:
+def write_experiment_report(output_dir: Path, summary: dict[str, Any], metrics_df: pd.DataFrame | None) -> None:
     lines = [
         "# CAU-RQ-VAE Experiment Report",
         "",
@@ -937,7 +942,7 @@ def write_experiment_report(summary: dict[str, Any], metrics_df: pd.DataFrame | 
             "",
         ]
     )
-    (ROOT / "reports/cau_rqvae_experiment_report.md").write_text("\n".join(lines), encoding="utf-8")
+    (output_dir / "experiment_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
@@ -1028,7 +1033,7 @@ def main() -> None:
     optimizer = make_optimizer(model, lr, weight_decay)
     phase = "warmup"
 
-    baseline = load_baseline_metrics(ROOT / "reports/cau_pilot_metrics.csv")
+    baseline = load_baseline_metrics(ROOT / "reports/metrics/cau_pilot_metrics.csv")
     log_rows: list[dict[str, Any]] = []
     sid_rows: list[dict[str, Any]] = []
     best_sid_row: dict[str, Any] | None = None
@@ -1225,13 +1230,17 @@ def main() -> None:
             max_report_groups=int(args.max_report_groups),
             train_row=best_train_row_for_sid,
         )
-        metrics_df = append_final_metrics(ROOT / "reports/cau_pilot_metrics.csv", formal_flat, best_train_row_for_sid)
+        metrics_df = append_final_metrics(
+            ROOT / "reports/metrics/cau_pilot_metrics.csv",
+            formal_flat,
+            best_train_row_for_sid,
+            output_dir,
+        )
         write_compare_reports(metrics_df, formal_flat, output_dir)
         write_cluster_examples(output_dir)
     else:
         print("no checkpoint passed protection; formal CAU SID export skipped")
 
-    shutil.copy2(train_log_path, ROOT / "reports/cau_rqvae_training_curves.csv")
     runtime_seconds = float(time.time() - started)
     summary = {
         "status": "success" if formal_flat is not None else "failed_no_protected_checkpoint",
@@ -1256,7 +1265,7 @@ def main() -> None:
     }
     (output_dir / "metrics.json").write_text(json.dumps(json_safe(summary), ensure_ascii=False, indent=2), encoding="utf-8")
     write_readme(output_dir, config, summary, best_sid_row)
-    write_experiment_report(summary, metrics_df)
+    write_experiment_report(output_dir, summary, metrics_df)
     print(json.dumps(json_safe(summary), ensure_ascii=False, indent=2))
 
 

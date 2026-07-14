@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
         default="data/sid/poi_sid_train_preview.csv",
         help="Output preview CSV path.",
     )
-    parser.add_argument("--report-dir", default="reports", help="Directory for coverage reports.")
+    parser.add_argument("--report-dir", default="outputs/reports/poi_sid", help="Directory for generated coverage reports.")
     parser.add_argument("--type-rules", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--brand-rules", default=None, help=argparse.SUPPRESS)
     return parser.parse_args()

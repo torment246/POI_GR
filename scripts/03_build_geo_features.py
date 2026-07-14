@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-meta", default="data/geo/poi_geo_meta.parquet", help="Output geo metadata parquet.")
     parser.add_argument("--stats-out", default="outputs/geo/geo_feature_stats.json", help="Output feature stats JSON.")
     parser.add_argument("--anchors-out", default="outputs/geo/geo_anchors.npy", help="Output KMeans anchor npy.")
-    parser.add_argument("--report", default="reports/poi_geo_quality_report.md", help="Output quality report.")
+    parser.add_argument("--report", default="outputs/reports/poi_geo_quality_report.md", help="Output quality report.")
     parser.add_argument("--report-dir", default=None, help="Directory for extra CSV reports.")
     parser.add_argument("--n-anchors", type=int, default=16, help="Number of spatial anchors.")
     parser.add_argument("--random-state", type=int, default=42, help="Random state for KMeans and sampling.")

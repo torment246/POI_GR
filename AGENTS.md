@@ -1,44 +1,48 @@
-# Repository Purpose
+# Repository Working Rules
 
-- This repository studies Semantic ID / POI ID construction for POI generative retrieval.
-- The current pipeline has completed MobilityBench data cleaning, POI text embedding, geographic features, RQ-VAE training, SID/PID export, and quality evaluation.
-- The current main line is Semantic SID. Geo_fused is kept as a spatially enhanced ablation.
+## 工作定位
 
-# Required Reading
+- 本仓库是代码开发仓库，不是自动报告生成仓库。
+- 默认产出是源码、配置、测试和必要的正式文档更新。
+- 优先完成可运行的代码修改，再给出必要说明。
 
-Before starting any task, read these files in order:
+## 开始任务前
 
-1. `docs/PROJECT_STATUS.md`
-2. `docs/REPO_MAP.md`
-3. `docs/DATA_AND_ARTIFACTS.md`
-4. `docs/EXPERIMENT_LOG.md`
-5. The task-specific file under `docs/experiments/*.md`
+- 阅读 `README.md`、`docs/PROJECT_STATUS.md` 和任务相关配置/实现。
+- 先定位并复用现有模块，不重复实现已有功能。
+- 不为单次任务随意增加顶层目录。
 
-# Working Rules
+## 报告规则
 
-- Locate the existing implementation before changing code; do not duplicate an existing function or script.
-- Do not overwrite existing baseline checkpoints, SID/PID mappings, reports, figures, or experiment results.
-- New experiments must write to an independent output directory.
-- New experiments must save config, command, log, metrics, and comparison report.
-- Fix random seeds for all stochastic experiments.
-- Before any training run, verify `poi_id`, `row_id`, and row order alignment.
-- `qrels` and `candidates` are for evaluation only unless an experiment plan explicitly uses weak supervision.
-- Do not commit raw data, model weights, embeddings, checkpoints, or large generated artifacts.
-- Do not fabricate experiment results.
-- Run a smoke test or pilot before long training.
-- After a task or experiment completes, update `docs/PROJECT_STATUS.md` and `docs/EXPERIMENT_LOG.md`.
-- Do not create a Git commit unless the user explicitly asks for one.
+- 默认不为每次任务创建 Markdown、审计、执行过程、迁移或时间戳报告。
+- 用户未明确要求报告文件时，只在最终回复中简洁总结。
+- 用户明确要求书面报告时，一次任务最多创建一个报告文件。
+- 项目状态、实验结果、数据产物、目录变化分别优先更新 `docs/PROJECT_STATUS.md`、`docs/EXPERIMENT_LOG.md`、`docs/DATA_AND_ARTIFACTS.md`、`docs/REPO_MAP.md`。
+- 不为同一主题创建重复 Markdown。
 
-# Current Conventions
+## 图表与生成文件
 
-- Python environment: `GR`, observed at `/mnt/data1/home/hudan/anaconda3/envs/GR/bin/python`.
-- Project root: physical path `/mnt/data2/hudan/poi_genret`; the shell may display the symlink path `/mnt/data1/home/hudan/poi_genret`.
-- Config directory: `configs/`.
-- Script directory: `scripts/`.
-- Source directory: `src/`.
-- Data directory: `data/`.
-- Output directory: `outputs/`.
-- Report directory: `reports/`.
-- Main RQ-VAE config: `configs/rqvae_train.yaml`.
-- Common execution style: run scripts from the repository root, for example `python scripts/05_export_and_eval_sid.py --mode both`.
-- GPU convention: scripts accept `--device auto`, `--device cpu`, or explicit CUDA devices such as `--device cuda` / `--device cuda:0`. On the 2026-07-12 inspection, `torch.cuda.is_available()` returned `False`; existing embedding reports record earlier CUDA usage.
+- 用户未明确要求时不生成图表，不为展示调试进度生成图片。
+- 实验所需临时图表放入 `outputs/figures/`，由 Git 忽略。
+- 只有被 README、论文、PPT 或正式文档引用的最终图表才能进入 tracked 目录。
+- 不默认生成大量 CSV、JSON、PNG 或 HTML；可由代码重新生成的大型分析文件不得提交 Git。
+
+## 代码开发
+
+- 新脚本必须职责明确，提供 `--help` 和合理错误处理。
+- 参数进入配置或命令行，不写死服务器绝对路径。
+- 不写入 Token、密码、公司服务器地址或敏感路径。
+- 滴滴真实业务数据不得加入公开 Git。
+- 模型、checkpoint、Embedding、NPY、Parquet 和实验输出不得加入 Git。
+
+## 执行与 Git
+
+- 用户未明确要求时不运行长时间训练；可以运行 compileall、轻量测试、`--help` 和小样本 smoke test。
+- 不执行 `git clean`，不删除未知数据或模型。
+- 不执行 `git push`，除非用户明确要求。
+- 完成前检查 `git diff`、`git status`、compileall 和相关轻量测试。
+- 不创建 commit，除非用户明确要求。
+
+## 最终回复
+
+只需说明：修改内容、验证结果、未解决问题，以及是否 commit/push。

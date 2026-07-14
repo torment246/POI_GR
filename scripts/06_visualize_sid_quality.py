@@ -19,25 +19,25 @@ from sid_visualization import configure_matplotlib, generate_all_figures
 
 
 DEFAULTS = {
-    "semantic_report": "reports/sid_quality_semantic.md",
-    "geo_fused_report": "reports/sid_quality_geo_fused.md",
-    "compare_report": "reports/sid_quality_compare.md",
+    "semantic_report": "outputs/reports/sid_quality_semantic.md",
+    "geo_fused_report": "outputs/reports/sid_quality_geo_fused.md",
+    "compare_report": "outputs/reports/sid_quality_compare.md",
     "semantic_mapping": "data/sid/poi_sid_mapping_semantic.parquet",
     "geo_fused_mapping": "data/sid/poi_sid_mapping_geo_fused.parquet",
     "out_dir": "outputs/figures/sid_quality",
 }
 
 OPTIONAL_INPUTS = [
-    "reports/sid_collision_groups_semantic.csv",
-    "reports/sid_collision_groups_geo_fused.csv",
-    "reports/sid_prefix1_summary_semantic.csv",
-    "reports/sid_prefix1_summary_geo_fused.csv",
-    "reports/sid_prefix2_summary_semantic.csv",
-    "reports/sid_prefix2_summary_geo_fused.csv",
-    "reports/sid_prefix3_summary_semantic.csv",
-    "reports/sid_prefix3_summary_geo_fused.csv",
-    "reports/sid_manual_cluster_samples_semantic.csv",
-    "reports/sid_manual_cluster_samples_geo_fused.csv",
+    "outputs/reports/sid_collision_groups_semantic.csv",
+    "outputs/reports/sid_collision_groups_geo_fused.csv",
+    "outputs/reports/sid_prefix1_summary_semantic.csv",
+    "outputs/reports/sid_prefix1_summary_geo_fused.csv",
+    "outputs/reports/sid_prefix2_summary_semantic.csv",
+    "outputs/reports/sid_prefix2_summary_geo_fused.csv",
+    "outputs/reports/sid_prefix3_summary_semantic.csv",
+    "outputs/reports/sid_prefix3_summary_geo_fused.csv",
+    "outputs/reports/sid_manual_cluster_samples_semantic.csv",
+    "outputs/reports/sid_manual_cluster_samples_geo_fused.csv",
 ]
 
 

@@ -57,9 +57,9 @@ DEFAULTS = {
     "geo_fused_mapping": "data/sid/poi_sid_mapping_geo_fused.parquet",
     "semantic_indices": "data/sid/poi_sid_indices_semantic.npy",
     "geo_fused_indices": "data/sid/poi_sid_indices_geo_fused.npy",
-    "semantic_report": "reports/sid_quality_semantic.md",
-    "geo_fused_report": "reports/sid_quality_geo_fused.md",
-    "compare_report": "reports/sid_quality_compare.md",
+    "semantic_report": "outputs/reports/sid_quality_semantic.md",
+    "geo_fused_report": "outputs/reports/sid_quality_geo_fused.md",
+    "compare_report": "outputs/reports/sid_quality_compare.md",
 }
 
 

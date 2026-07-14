@@ -74,10 +74,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--report",
-        default="reports/poi_embedding_quality_report.md",
+        default="outputs/reports/poi_embedding_quality_report.md",
         help="Output embedding quality report.",
     )
-    parser.add_argument("--model", default="/model/Qwen3-Embedding-0.6B", help="Local sentence-transformers model path.")
+    parser.add_argument("--model", default="models/Qwen3-Embedding-0.6B", help="Local sentence-transformers model path.")
     parser.add_argument("--batch-size", type=int, default=64, help="Embedding batch size.")
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda, cuda:0, etc.")
     parser.add_argument("--max-length", type=int, default=256, help="SentenceTransformer max sequence length.")
