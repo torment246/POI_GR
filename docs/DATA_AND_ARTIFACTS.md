@@ -1,53 +1,44 @@
-# Data and Artifacts
+# 数据与产物管理
 
-## What Git Stores
+## Git 保存内容
 
-- Source code, scripts, configs and tests.
-- README and long-lived documentation.
-- Public processed MobilityBench baseline under `data/processed/mobilitybench/`.
-- Small, stable historical metrics under `reports/metrics/`.
+- 新流水线的源码、配置和测试。
+- 合成测试样例或经过明确批准的匿名样例。
+- README、方案和长期维护文档。
 
-## What Git Does Not Store
+## Git 禁止保存内容
 
-- Didi real POI data or any internal business fields.
-- Raw/private datasets, local model directories and downloaded weights.
-- Embedding arrays, NPY/NPZ, generated Parquet, checkpoints and ONNX/binary model files.
-- Training outputs, logs, generated reports, plots and temporary analysis tables.
-- Ad-hoc legacy copies inside the repository; use approved external archival storage instead.
+- 真实 POI、Query、行为标签和其他业务字段。
+- 下载的模型目录和模型权重。
+- Embedding、NPY/NPZ、Parquet、checkpoint 和二进制模型产物。
+- 训练输出、日志、自动报告、图表和临时分析表。
+- 凭证、内部服务地址和敏感绝对路径。
 
-## Stable Data Contract
+## 当前本地产物
 
-Generated POI features and SID mappings must preserve deterministic row alignment:
-
-- `poi_id` is non-empty and unique.
-- `row_id` is stable and ordered.
-- Metadata, Embedding, geo features, RQ-VAE inputs and SID mappings have matching row counts/order.
-- Numeric arrays contain no NaN or Inf.
-- `qrels` and `candidates` are evaluation inputs unless an approved experiment explicitly states otherwise.
-
-## Public Baseline
-
-Tracked MobilityBench files live in `data/processed/mobilitybench/`. They support public code validation. Other content under `data/` is local and ignored.
-
-## Didi Data Policy
-
-- Didi POI data must remain in approved internal storage and must never be pushed to the public repository.
-- Do not place access tokens, internal hosts or sensitive absolute paths in code/config/docs.
-- Commit only schemas, synthetic fixtures or explicitly approved anonymized samples.
-
-## Local Artifact Layout
-
-| Path | Purpose | Git policy |
+| 路径 | 用途 | Git 规则 |
 |---|---|---|
-| `models/` | local pretrained models | ignored |
-| `data/embeddings/` | text embeddings and metadata | ignored |
-| `data/geo/` | geographic features and metadata | ignored |
-| `data/rqvae/` | model input arrays | ignored |
-| `data/sid/` | SID indices/mappings | ignored |
-| `outputs/` | checkpoints, logs, metrics, reports and figures | ignored |
+| `data/` | 内部源数据和后续生成数据 | 全部忽略 |
+| `models/` | 本地 Qwen3 生成模型和 Embedding 模型 | 全部忽略 |
 
-## Regeneration and Backup
+只有新流水线真正需要时才创建额外产物目录，不提前创建空目录。
 
-- Regenerable: parsed intermediates, Embedding, feature arrays, SID mappings, analysis tables and figures when source data/config/model versions are available.
-- Must be backed up externally when needed: irreplaceable raw snapshots, approved training checkpoints, exact model versions and final experiment manifests.
-- A completed experiment output should contain config, command, environment, commit, log, metrics and selected checkpoint in one isolated directory.
+## 数据契约要求
+
+任何特征生成或训练开始前，必须明确并校验：
+
+- POI 和 Query 的字段名、类型、含义与隐私级别；
+- 稳定、非空且唯一的 POI 标识；
+- Query 到目标 POI 标签的来源和有效性；
+- 空值、异常坐标、重复记录和失效 POI 的处理规则；
+- 确定性去重、排序和数据切分规则；
+- POI 元数据、特征、编码和模型目标之间的行对齐关系。
+
+不得把已删除实验中的字段假设直接用于真实数据。
+
+## 版本与可复现性
+
+- 数据版本使用稳定标识，不在文档中记录真实样本内容。
+- 正式实验必须记录数据版本、配置、代码提交、命令、环境和产物位置。
+- 可重新生成的特征和训练产物由版本化代码与配置重建。
+- 不可替代的源数据快照和重要 checkpoint 保存在批准的内部存储中。

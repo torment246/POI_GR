@@ -1,37 +1,17 @@
-# Repository Map
+# 仓库目录说明
 
-Only stable directories and responsibilities are listed here.
+当前只列出已经存在且职责稳定的路径。
 
 ```text
-README.md                         project entry point
-AGENTS.md                         Codex collaboration rules
-requirements.txt                  Python dependencies
-configs/                          experiment configuration
-src/                              reusable library modules
-scripts/data/                     dataset preparation, processing and validation
-scripts/sid/                      POI feature, RQ-VAE, SID and CAU pipelines
-scripts/eval/                     retrieval evaluation
-docs/                             long-lived project documentation
-reports/metrics/                  small stable historical metrics
-data/processed/mobilitybench/     tracked public baseline
-models/                           ignored local models
-outputs/                          ignored generated experiment outputs
+README.md                     项目入口和当前范围
+方案.md                       第一版技术方案与实施顺序
+AGENTS.md                     Codex 开发、核验和实验记录规则
+docs/PROJECT_STATUS.md        当前阶段、已确定事项和下一步
+docs/EXPERIMENT_LOG.md        唯一的正式实验进展记录
+docs/DATA_AND_ARTIFACTS.md    数据、模型和产物管理规则
+docs/REPO_MAP.md              稳定目录职责
+data/                         本地内部数据，Git 忽略
+models/                       本地模型，Git 忽略
 ```
 
-## Source Modules
-
-- `src/poi_genret/`: processed-data schema, normalization and retrieval evaluation.
-- `src/embedding_utils.py`, `src/text_normalize.py`: POI text and embedding helpers.
-- `src/geo_features.py`: coordinate, geohash and anchor features.
-- `src/rqvae.py`, `src/rqvae_preprocess.py`, `src/train_utils.py`: RQ-VAE model, preprocessing and training utilities.
-- `src/cau_labels.py`: CAU coarse-category labels.
-- `src/sid_eval.py`, `src/sid_visualization.py`: SID/PID evaluation and optional visualization.
-
-## Script Groups
-
-- Dataset layer: `scripts/data/process_*.py`, `scripts/data/prepare_*.py`, `scripts/data/analyze_all_datasets.py`, `scripts/data/validate_mobilitybench_data.py`.
-- POI SID pipeline: `scripts/sid/01_build_poi_sid_train_data.py` through `scripts/sid/06_visualize_sid_quality.py`.
-- CAU pipeline: `scripts/sid/07_build_cau_labels.py`, `scripts/sid/08_train_cau_rqvae.py`, `scripts/sid/09_train_cau_final.py`.
-- Retrieval evaluation: `scripts/eval/evaluate.py`.
-
-Generated reports and figures default to ignored `outputs/` paths. New scripts should follow the same convention and expose configurable input/output paths.
+当前没有 `src/`、`scripts/`、`configs/`、`tests/` 和 `outputs/`。后续按最小开发步骤逐项创建，不为保持形式提前建立空目录，也不恢复旧目录结构。

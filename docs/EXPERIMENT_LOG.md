@@ -1,18 +1,61 @@
-# Experiment Log
+# 实验进展
 
-Keep one compact row per meaningful experiment. Large logs, checkpoints and generated reports belong in ignored experiment output directories.
+本文件是项目唯一的正式实验记录。新增实验只追加到这里，不为单次实验创建新的 Markdown。
 
-| Experiment | Dataset | Config | Commit | Main result | Artifact status |
+## 当前进展
+
+- 当前阶段：方案确认与数据准备。
+- 已完成：第一版方案、开发核验规则、实验记录规范。
+- 待完成：Query—目标 POI 样本、数据切分和字段契约。
+- 正式实验：尚未开始。
+
+## 实验索引
+
+| 实验编号 | 日期 | 阶段 | 目标 | 状态 | 核心结论 |
 |---|---|---|---|---|---|
-| Semantic RQ-VAE | MobilityBench | `configs/rqvae_train.yaml` | pre-baseline history | best epoch 142; reconstruction cosine 0.5157; unique SID 0.5617 | legacy; do not resume |
-| Geo-fused RQ-VAE | MobilityBench | `configs/rqvae_train.yaml` | pre-baseline history | stronger city purity but worse collision metrics than Semantic | legacy ablation |
-| SID/PID evaluation | MobilityBench | Semantic/geo-fused export | pre-baseline history | Semantic selected as first main line; PID dedup reached full uniqueness | results summarized only |
-| CAU pilots P1/P2 | MobilityBench | `configs/rqvae_cau.yaml` | pre-baseline history | P1 preserved quality best; P2 improved uniqueness with Prefix1 trade-off | metrics in `reports/metrics/cau_pilot_metrics.csv` |
-| CAU Final P1 | MobilityBench | `configs/rqvae_cau.yaml` | pre-baseline history | Prefix1 0.3642; unique SID 0.6009; qrels SID collision 0.4689; held-out Macro-F1 0.9397 | legacy; retrain for Didi |
 
-## Logging Convention
+状态只使用：`计划中`、`运行中`、`已完成`、`失败`、`已中止`。
 
-- Add a row or a short subsection only after a reproducible experiment finishes.
-- Record dataset version, config, commit, primary result and artifact status.
-- Keep command, environment, full metrics and logs inside the experiment output directory.
-- Do not create a separate tracked Markdown report for every run unless explicitly requested.
+## 记录模板
+
+后续实验复制以下小节并填写。实验编号使用 `EXP-YYYYMMDD-NN`，同一天从 `01` 递增。
+
+### EXP-YYYYMMDD-NN：实验名称
+
+- 状态：计划中
+- 日期：YYYY-MM-DD
+- 对应方案阶段：
+- 负责人：
+
+#### 目标与假设
+
+- 目标：
+- 假设：
+- 本次只改变的变量：
+- 明确不改变的内容：
+
+#### 数据与代码
+
+- 数据版本：
+- 数据切分：
+- Git commit 或工作树状态：
+- 相关代码：
+- 配置文件：
+- 运行命令：
+- 运行环境：
+
+不得在这里粘贴真实业务样本、内部地址或凭证。
+
+#### 验收指标
+
+| 指标 | 预期或基线 | 实际结果 |
+|---|---:|---:|
+
+#### 结果与结论
+
+- 产物位置：
+- 运行结果：
+- 是否支持假设：
+- 已知问题：
+- 结论：
+- 下一步：

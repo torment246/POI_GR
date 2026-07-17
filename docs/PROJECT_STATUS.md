@@ -1,53 +1,41 @@
-# Project Status
+# 项目状态
 
-Last updated: 2026-07-14.
+更新时间：2026-07-17。
 
-## Current Goal
+## 当前阶段
 
-Develop a reusable POI-side pipeline for generative retrieval:
+仓库处于真实 POI 数据生成式检索项目的重新启动阶段。
 
-```text
-POI fields -> text/geo features -> RQ-VAE -> SID + GID -> PID -> retrieval evaluation
-```
+- 旧数据、旧代码、旧配置和旧实验记录已经清除。
+- 本地已准备清洗后的北京 POI 数据，位于 Git 忽略的 `data/`。
+- Query—目标 POI 训练样本、切分清单和字段契约尚未完整交付。
+- 本地已准备 Qwen3 生成模型和 Embedding 候选模型，位于 Git 忽略的 `models/`。
+- 当前尚未建立源码、配置、测试和依赖清单。
+- 第一版技术路线以根目录 `方案.md` 为准。
 
-The next production-facing stage uses Didi POI data. Historical MobilityBench features, models and experiment outputs are reference results only and must not be reused as initialization or training input.
+## 已确定原则
 
-## Implemented Code
+- 生成模型首版使用 Qwen3-0.6B，采用非思考模式。
+- 先完成数据契约和最小验证，再开发特征、编码、SFT 与约束解码。
+- 每次只交付一个可独立核验的最小步骤，用户确认后再继续。
+- 所有正式实验只记录在 `docs/EXPERIMENT_LOG.md`。
+- 真实数据、模型和实验产物不进入 Git。
 
-- Common processed-data schemas and dataset processors.
-- MobilityBench cleaning, split validation and reference checks.
-- POI text construction and local SentenceTransformer embedding.
-- Geohash, coordinate and anchor-based geographic features.
-- Semantic and geo-fused RQ-VAE training.
-- SID/GID/PID export, collision metrics and prefix-purity evaluation.
-- CAU-RQ-VAE category supervision, uniqueness regularization, pilot/final training and protected checkpoint selection.
-- SID quality visualization utilities. Generated figures remain under ignored output directories.
+## 开工前仍需确认
 
-## Available Public Baseline
+1. POI 数据字段、类型、空值含义和稳定主键。
+2. Query 样本字段、目标 POI 标签来源和负样本定义。
+3. 训练、验证、测试切分以及长尾、新 POI、no-result 专项集合。
+4. 数据版本标识和本地可复现校验方式。
 
-`data/processed/mobilitybench/` is the tracked public baseline. Current main-table counts are:
+## 第一个开发步骤
 
-| Table | Rows |
-|---|---:|
-| `pois.csv` | 109385 |
-| `queries.csv` | 18011 |
-| `candidates.csv` | 63804 |
-| `qrels.csv` | 9735 |
+数据准备完成后，只先实现“数据读取与字段校验”最小闭环：
 
-MobilityBench is useful for code validation and public comparison, not as a substitute for the next Didi dataset.
+- 定义数据契约；
+- 实现流式或分块读取；
+- 使用合成数据编写单元测试；
+- 对真实数据只输出非敏感汇总和明确错误；
+- 用户核验代码与结果后，再进入文本特征和 Embedding 选择。
 
-## Artifact Status
-
-- Old local models, data copies and experiment outputs are not retained in the active workspace; historical records remain on the previous server.
-- Active generated directories are empty until a new controlled run creates artifacts.
-- Historical RQ-VAE/CAU results remain summarized in `docs/EXPERIMENT_LOG.md`; their old artifacts are not guaranteed to exist or remain compatible.
-- Do not resume the old CAU checkpoint. Rebuild features and retrain after the Didi schema and data contract are finalized.
-
-## Next Stage
-
-1. Define Didi POI field contract, privacy boundary and stable `poi_id`/row-order rules.
-2. Define text feature composition and offline model source.
-3. Define geographic GID and semantic SID objectives.
-4. Build a small aligned sample and run data/feature smoke tests.
-5. Re-run Embedding, Semantic RQ-VAE and CAU-RQ-VAE from scratch with isolated outputs.
-6. Evaluate SID/PID quality before starting query-to-PID training.
+未经用户明确要求，不恢复旧实验代码，也不提前实现训练流程。

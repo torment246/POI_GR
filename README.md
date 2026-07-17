@@ -1,63 +1,34 @@
 # POI Generative Retrieval
 
-面向 POI 生成式检索的代码仓库，当前重点是 POI 文本/空间特征、RQ-VAE Semantic ID、GID/PID 构造与离线质量评估。
+面向地图 POI 生成式检索的代码开发仓库。
 
-## 当前范围
+仓库已经清除旧公开数据基线、历史实验代码、配置、指标和结果。后续工作从内部真实 POI 数据重新开始，不继承旧实验实现与结论。
 
-- `data/processed/mobilitybench/` 提供公开 MobilityBench baseline。
-- 历史 MobilityBench 模型、中间数组和实验输出不再作为新实验输入。
-- 下一阶段接入滴滴真实 POI 数据，重新定义字段、构建 Embedding、GID/SID，并从头运行 RQ-VAE 与 CAU-RQ-VAE。
-- 本仓库只保存代码、配置、测试、正式文档和少量稳定指标；真实业务数据与生成产物不进入公开 Git。
+## 当前状态
 
-## 仓库结构
+- 本地保留清洗后的内部 POI 数据，位于 `data/`，不进入 Git。
+- 本地保留 Qwen3 生成模型和 Embedding 模型，位于 `models/`，不进入 Git。
+- 当前没有可运行的训练或评估代码，也没有固定 Python 依赖。
+- 新代码应从字段契约、数据读取和小样本测试开始逐步建立。
+- 第一版技术路线以 [`方案.md`](方案.md) 为准，按最小可核验步骤逐步实施。
 
-```text
-configs/                         训练与实验配置
-src/                             可复用实现
-scripts/data/                    数据准备、处理与校验入口
-scripts/sid/                     Embedding、RQ-VAE、SID 与 CAU 入口
-scripts/eval/                    检索评估入口
-docs/                            长期维护文档
-reports/metrics/                 少量稳定历史指标
-data/processed/mobilitybench/    公开 baseline
-models/                          本地模型（Git 忽略）
-outputs/                         实验输出（Git 忽略）
-```
+## 下一阶段
 
-## 环境安装
+1. 明确真实 POI 字段、隐私边界和稳定主键。
+2. 建立可测试的数据读取与校验模块。
+3. 重新设计 POI 文本表示、地理特征和生成目标。
+4. 先以小模型和小样本打通生成式检索 SFT 流程。
+5. 基础指标稳定后再评估强化学习或其他检索建模方法。
 
-建议使用独立 Python 环境：
+## Git 边界
 
-```bash
-python -m pip install -r requirements.txt
-```
-
-模型和数据由使用者在本地准备，脚本不得依赖写死的服务器绝对路径。
-
-## 最小运行流程
-
-先验证公开 baseline：
-
-```bash
-python scripts/data/validate_mobilitybench_data.py
-```
-
-完整 POI 侧流水线入口如下；真实数据接入后应先更新字段契约和配置，并先运行小样本 smoke test：
-
-```bash
-python scripts/sid/01_build_poi_sid_train_data.py
-python scripts/sid/02_embed_poi_text.py --model models/Qwen3-Embedding-0.6B --device auto
-python scripts/sid/03_build_geo_features.py
-python scripts/sid/04_train_rqvae.py --config configs/rqvae_train.yaml --mode semantic
-python scripts/sid/05_export_and_eval_sid.py --mode semantic
-```
-
-上述命令会向 `data/embeddings/`、`data/geo/`、`data/rqvae/`、`data/sid/` 和 `outputs/` 写入被 Git 忽略的产物。不要将模型、checkpoint、Embedding、NPY、Parquet 或真实业务数据加入 Git。
+Git 只保存源码、配置、测试和必要的长期文档。真实业务数据、下载模型、Embedding、数组、Parquet、checkpoint、日志和实验输出必须留在本地或内部存储。
 
 ## 文档入口
 
+- [第一版方案](方案.md)
 - [项目状态](docs/PROJECT_STATUS.md)
-- [实验日志](docs/EXPERIMENT_LOG.md)
+- [实验进展](docs/EXPERIMENT_LOG.md)
 - [数据与产物管理](docs/DATA_AND_ARTIFACTS.md)
 - [仓库目录说明](docs/REPO_MAP.md)
 - [Codex 协作规范](AGENTS.md)

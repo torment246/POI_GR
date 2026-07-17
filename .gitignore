@@ -1,22 +1,11 @@
-# Local legacy assets retained outside the active pipeline
-_local_legacy/
-
-# Generated data and artifacts
-data/*
-!data/processed/
-data/processed/*
-!data/processed/mobilitybench/
-!data/processed/mobilitybench/**
-data/processed/mobilitybench/poi_catalog_from_sandbox.csv
-data/embeddings/
-data/geo/
-data/rqvae/
-data/sid/
+# Internal data, models and generated artifacts
+data/
 models/
 outputs/
 checkpoints/
 runs/
 logs/
+artifacts/
 
 # Large array, table, and model artifacts
 *.npy
@@ -36,8 +25,8 @@ __pycache__/
 .ipynb_checkpoints/
 .cache/
 
-# Task-local/generated reports. Stable small metrics live in reports/metrics/.
-reports/*.csv
+# Task-local/generated reports
+reports/
 reports/local_*
 reports/task_*
 reports/tmp/
