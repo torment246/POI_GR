@@ -10,7 +10,7 @@
 - 本地已准备清洗后的北京 POI 数据，位于 Git 忽略的 `data/`。
 - Query—目标 POI 训练样本、切分清单和字段契约尚未完整交付。
 - 本地已准备 Qwen3 生成模型和 Embedding 候选模型，位于 Git 忽略的 `models/`。
-- 已建立通用 POI 文本向量流水线和 RQ-VAE SID 训练评估流水线、配置、轻量测试和依赖清单。
+- 已建立通用 POI 文本向量流水线、配置、轻量测试和依赖清单；SID 阶段旧实现已清理，等待重新设计。
 - 已建立 Query 编码、Gate 0 对齐检查、Faiss GPU 精确召回和分桶指标评估流水线。
 - 第一版技术路线以根目录 `方案.md` 为准。
 
@@ -44,17 +44,12 @@
 - 使用合成数据验证顺序、重复 ID 拒绝、输出 shape/dtype 和断点续写。
 - 使用有限缓冲区扩大长度排序范围，同时保持 POI ID 与向量行顺序不变。
 - 使用 mmap 读取 0.6B Embedding，避免把全量向量加载到内存。
-- 实现 MiniOneRec 风格的三层可学习残差码本、K-Means 初始化、可恢复 checkpoint 和全量逐轮碰撞评估。
-- 实现全量 SID 导出、重建误差、余弦相似度、码本使用率、perplexity、唯一性，以及末层 Sinkhorn 碰撞重分配。
-- 完成 2,337,178 条 0.6B Embedding 的 20 epoch 全量 RQ-VAE 训练；最终按原始 SID 碰撞率选择第 20 轮 checkpoint。
-- 第 20 轮全量重建余弦为 0.803871；原始最近邻 SID 唯一率为 50.98%，Sinkhorn 重分配后为 70.47%。
-- 最终仍有 39.95% 的 POI 位于碰撞组中，第一层仅使用 130/256 个 code；当前结果作为 RQ-VAE 基线，不作为最终唯一 POI 编码。
 - 完成 10,000 条固定评测订单的 Gate 0：订单、目标 POI、全量向量、POI ID、原始分片顺序和指纹全部通过检查。
 - 完成 E1：复用 POI 编码器配置生成原始 Query 向量，通过 Faiss GPU float32 `IndexFlatIP` 输出 Top-20、目标排名、整体指标和 Query 长度分桶指标。
 - 完成 E2：保持 E1 的评测数据、顺序、无 Instruction 输入和指标逻辑不变，使用 4B 向量完成 GPU float32 `GpuIndexFlatIP` 精确 Top-20 召回及逐行独立核验。
 
 ## 下一最小步骤
 
-由用户核验 E1/E2 对照：当前相同无 Instruction 口径下 0.6B 的整体和各长度分桶指标均高于 4B，但暂不自动选择最终模型。RQ-VAE 方面需决定是结合 Geohash GID 缓解空间碰撞，还是先增加 K-Means 初始化样本、训练轮数及 RQ-KMeans 等对照。
+向量阶段已完成 0.6B/4B 无 Instruction 对照。下一步重新启动 SID 阶段：先确认输入 Embedding、RQ-VAE/RQ-KMeans 对照范围、初始化方案和验收指标，再实现独立可核验的最小 smoke test。
 
 在用户确认前，不进入 GID、SFT 或后续训练流程，也不自动运行新的 Embedding 对照实验。

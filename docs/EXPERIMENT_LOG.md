@@ -7,7 +7,7 @@
 | 阶段 | 文档 | 当前范围 | 状态 |
 |---|---|---|---|
 | 向量实验 | [向量实验](experiments/EMBEDDING.md) | 0.6B/4B POI 向量构建、Query 编码与精确召回评测 | 已完成首轮基线与模型对照 |
-| RQ-VAE 与 SID | [RQ-VAE 与 SID 实验](experiments/RQVAE_SID.md) | RQ-VAE、RQ-KMeans、碰撞分析、GID 与完整 SID | 已完成首轮 RQ-VAE 基线，后续实验待确认 |
+| RQ-VAE 与 SID | [RQ-VAE 与 SID 实验](experiments/RQVAE_SID.md) | RQ-VAE、RQ-KMeans、碰撞分析、GID 与完整 SID | 已重置，等待重新设计首轮实验 |
 
 后续只有在新阶段开始正式实验时才新增一个阶段文档，例如 SFT 或约束解码；不得为每次运行单独创建 Markdown。
 
@@ -17,7 +17,6 @@
 |---|---|---|---|---|
 | `EXP-20260717-01` | 2026-07-17 | 向量构建 | 已完成 | Qwen3-Embedding-0.6B 完成 2,337,178 条 POI 编码，吞吐 451.49 条/秒 |
 | `EXP-20260718-01` | 2026-07-18 | 向量构建 | 已完成 | Qwen3-Embedding-4B 完成 2,337,178 条 POI 编码，吞吐 114.86 条/秒 |
-| `EXP-20260719-01` | 2026-07-19 | RQ-VAE 与 SID | 已完成，待验收 | 最终 SID 唯一率 70.47%，39.95% 的 POI 仍位于碰撞组 |
 | `EXP-20260722-01` | 2026-07-22 | 向量召回评测 | 已完成 | 0.6B 无 Instruction：Hit@10 28.25%，MRR@10 16.6907% |
 | `EXP-20260722-02` | 2026-07-22 | 向量召回评测 | 已完成 | 4B 无 Instruction：Hit@10 21.18%，低于相同口径的 0.6B |
 

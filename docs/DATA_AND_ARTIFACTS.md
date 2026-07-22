@@ -21,7 +21,7 @@
 | `data/` | 内部源数据和后续生成数据 | 全部忽略 |
 | `models/` | 本地 Qwen3 生成模型和 Embedding 模型 | 全部忽略 |
 | `outputs/embeddings/` | 全量 Embedding、ID 映射和运行元信息 | 全部忽略 |
-| `outputs/rqvae/` | RQ-VAE checkpoint、三层 SID、训练历史和评估指标 | 全部忽略 |
+| `outputs/rqvae/` | 后续 SID 实验的可重建产物；需要时再创建 | 全部忽略 |
 | `outputs/evaluation/` | Query 向量、行映射、召回结果、指标和运行元信息 | 全部忽略 |
 | `outputs/experiments/` | smoke test 和其他实验产物 | 全部忽略 |
 
@@ -54,13 +54,7 @@
 - `manifest.json`：输入指纹、模型参数、shape、dtype、环境和耗时；
 - `progress.json`：已安全写入的断点位置和任务状态；恢复时以该位置截断未确认的尾部数据。
 
-RQ-VAE 产物约定：
-
-- `checkpoint_best_loss.pt`、`checkpoint_best_collision.pt`、`checkpoint_last.pt`：最低训练损失、最低原始 SID 碰撞率和最近一轮的可恢复训练状态；
-- `sids.npy`：与源 Embedding 和 `poi_ids.jsonl` 行号严格一致的三层离散编码；
-- `metrics.json`：重建、码本使用率、SID 唯一性和碰撞指标；
-- `training_history.jsonl`：每个 epoch 的训练指标和全量原始 SID 碰撞指标；
-- `manifest.json`：源 Embedding 指纹、完整配置、环境、运行状态和产物位置。
+SID 产物的文件契约尚未重新确定。新实现必须在 smoke test 前明确 checkpoint、编码映射、指标和 manifest 的格式；所有产物继续放在 `outputs/` 并由 Git 忽略。
 
 Embedding 召回评测产物约定：
 
