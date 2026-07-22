@@ -20,6 +20,10 @@
 |---|---|---|
 | `data/` | 内部源数据和后续生成数据 | 全部忽略 |
 | `models/` | 本地 Qwen3 生成模型和 Embedding 模型 | 全部忽略 |
+| `outputs/embeddings/` | 全量 Embedding、ID 映射和运行元信息 | 全部忽略 |
+| `outputs/rqvae/` | RQ-VAE checkpoint、三层 SID、训练历史和评估指标 | 全部忽略 |
+| `outputs/evaluation/` | Query 向量、行映射、召回结果、指标和运行元信息 | 全部忽略 |
+| `outputs/experiments/` | smoke test 和其他实验产物 | 全部忽略 |
 
 只有新流水线真正需要时才创建额外产物目录，不提前创建空目录。
 
@@ -42,3 +46,26 @@
 - 正式实验必须记录数据版本、配置、代码提交、命令、环境和产物位置。
 - 可重新生成的特征和训练产物由版本化代码与配置重建。
 - 不可替代的源数据快照和重要 checkpoint 保存在批准的内部存储中。
+
+当前向量产物约定：
+
+- `embeddings.npy`：顺序写入的二维标准 NPY，完成后支持 mmap，行顺序与 `poi_ids.jsonl` 一致；
+- `poi_ids.jsonl`：每行一个 JSON 字符串形式的 POI ID；
+- `manifest.json`：输入指纹、模型参数、shape、dtype、环境和耗时；
+- `progress.json`：已安全写入的断点位置和任务状态；恢复时以该位置截断未确认的尾部数据。
+
+RQ-VAE 产物约定：
+
+- `checkpoint_best.pt`、`checkpoint_last.pt`：最佳和最近一轮可恢复训练状态；
+- `sids.npy`：与源 Embedding 和 `poi_ids.jsonl` 行号严格一致的三层离散编码；
+- `metrics.json`：重建、码本使用率、SID 唯一性和碰撞指标；
+- `training_history.jsonl`：每个 epoch 的训练与验证指标；
+- `manifest.json`：源 Embedding 指纹、切分、完整配置、环境和产物位置。
+
+Embedding 召回评测产物约定：
+
+- `query_embeddings/*.npy`：按固定评测 JSONL 行顺序保存的 Query 向量；
+- `query_embeddings/*_rows.jsonl`：Query 行号、订单标识和目标 POI 的对齐映射；
+- `metrics.json`：整体召回指标和 Query 长度分桶指标；
+- `retrieval_results.npz`：Top-K POI 行号、相似度和目标排名；
+- `run_manifest.json`：Gate 0、模型配置、Faiss 设备、耗时、显存和产物指纹。

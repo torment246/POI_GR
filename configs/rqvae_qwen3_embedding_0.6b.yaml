@@ -1,0 +1,47 @@
+job_name: beijing_poi_rqvae_qwen3_embedding_0.6b
+
+data:
+  embeddings_path: outputs/embeddings/beijing_poi_qwen3_embedding_0.6b/embeddings.npy
+  ids_path: outputs/embeddings/beijing_poi_qwen3_embedding_0.6b/poi_ids.jsonl
+  manifest_path: outputs/embeddings/beijing_poi_qwen3_embedding_0.6b/manifest.json
+  expected_rows: 2337178
+  expected_dim: 1024
+
+model:
+  input_dim: 1024
+  hidden_dims: [768, 512, 256, 128, 64]
+  latent_dim: 32
+  codebook_sizes: [256, 256, 256]
+  dropout: 0.0
+  commitment_weight: 0.25
+  quantization_weight: 1.0
+  kmeans_init: true
+  kmeans_iterations: 100
+  sinkhorn_epsilons: [0.0, 0.0, 0.0]
+  sinkhorn_iterations: 50
+
+training:
+  device: cuda
+  batch_size: 4096
+  eval_batch_size: 8192
+  epochs: 20
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  warmup_epochs: 1
+  collision_eval_interval: 1
+  num_workers: 4
+  block_size: 65536
+  seed: 20260719
+  use_bf16: true
+  gradient_clip_norm: 1.0
+
+export:
+  resolve_collisions: true
+  sinkhorn_epsilon: 0.003
+  sinkhorn_iterations: 50
+  max_collision_iterations: 20
+  sinkhorn_batch_elements: 4000000
+
+output:
+  dir: outputs/rqvae/beijing_poi_qwen3_embedding_0.6b
+  resume: true

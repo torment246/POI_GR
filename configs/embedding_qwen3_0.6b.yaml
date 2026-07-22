@@ -1,0 +1,29 @@
+job_name: beijing_poi_qwen3_embedding_0.6b
+
+data:
+  input_dir: data/beijing_poi_clean_20260715_json
+  file_pattern: part-*.json
+  success_marker: _SUCCESS
+  id_field: poi_id
+  text_field: text
+  expected_rows: 2337178
+  check_unique_ids: true
+
+model:
+  path: models/Qwen3-Embedding-0.6B
+  device: cuda
+  batch_size: 64
+  encode_buffer_size: 8192
+  max_seq_length: 512
+  torch_dtype: bfloat16
+  attention: sdpa
+  padding_side: left
+  normalize_embeddings: true
+  truncate_dim: null
+  prompt_name: null
+
+output:
+  dir: outputs/embeddings/beijing_poi_qwen3_embedding_0.6b
+  embedding_dtype: float16
+  checkpoint_interval_batches: 20
+  resume: true
