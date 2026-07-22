@@ -42,7 +42,7 @@ Git 只保存源码、配置、测试和必要的长期文档。真实业务数�
 
 - [第一版方案](方案.md)
 - [项目状态](docs/PROJECT_STATUS.md)
-- [实验进展](docs/EXPERIMENT_LOG.md)
+- [实验进展索引](docs/EXPERIMENT_LOG.md)
 - [数据与产物管理](docs/DATA_AND_ARTIFACTS.md)
 - [仓库目录说明](docs/REPO_MAP.md)
 - [Codex 协作规范](AGENTS.md)

@@ -7,7 +7,9 @@ README.md                     项目入口和当前范围
 方案.md                       第一版技术方案与实施顺序
 AGENTS.md                     Codex 开发、核验和实验记录规则
 docs/PROJECT_STATUS.md        当前阶段、已确定事项和下一步
-docs/EXPERIMENT_LOG.md        唯一的正式实验进展记录
+docs/EXPERIMENT_LOG.md        正式实验阶段入口和总索引
+docs/experiments/EMBEDDING.md 向量构建、Query 编码和召回评测记录
+docs/experiments/RQVAE_SID.md RQ-VAE、碰撞、GID 和完整 SID 记录
 docs/DATA_AND_ARTIFACTS.md    数据、模型和产物管理规则
 docs/REPO_MAP.md              稳定目录职责
 configs/                       可复现任务配置

@@ -19,7 +19,7 @@
 - 生成模型首版使用 Qwen3-0.6B，采用非思考模式。
 - 先完成数据契约和最小验证，再开发特征、编码、SFT 与约束解码。
 - 每次只交付一个可独立核验的最小步骤，用户确认后再继续。
-- 所有正式实验只记录在 `docs/EXPERIMENT_LOG.md`。
+- `docs/EXPERIMENT_LOG.md` 维护实验索引，完整实验记录按阶段归档到 `docs/experiments/`。
 - 真实数据、模型和实验产物不进入 Git。
 - Qwen3-Embedding-0.6B 全量配置采用 batch size 64、编码缓冲区 8192；2,337,178 条北京 POI 全量向量已完成并通过校验。
 - Qwen3-Embedding-4B 全量配置采用 batch size 64、编码缓冲区 8192 和 PyTorch SDPA；2,337,178 条北京 POI 全量向量已完成并通过校验。
