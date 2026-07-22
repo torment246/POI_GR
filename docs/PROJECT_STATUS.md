@@ -44,18 +44,17 @@
 - 使用合成数据验证顺序、重复 ID 拒绝、输出 shape/dtype 和断点续写。
 - 使用有限缓冲区扩大长度排序范围，同时保持 POI ID 与向量行顺序不变。
 - 使用 mmap 读取 0.6B Embedding，避免把全量向量加载到内存。
-- 实现三层 EMA 残差码本、dead-code 重置、可恢复 checkpoint 和确定性训练/验证切分。
-- 实现全量 SID 导出、重建误差、余弦相似度、码本使用率、perplexity、唯一性和碰撞评估。
-- 262,144 条真实向量的 5 epoch smoke 已通过，未再出现码本全部塌缩；该结果不作为正式实验结论。
-- 完成 2,337,178 条 0.6B Embedding 的首轮全量 RQ-VAE 训练和 SID 导出；训练、恢复、评估和产物校验链路均已跑通。
-- checkpoint 选择指标已从包含 commitment loss 的总损失改为验证集重建 MSE；复用第 20 轮 checkpoint 完成全量 SID 重新导出，没有重新训练。
-- 修正后的全量重建余弦为 0.831692，唯一 SID 比例为 52.15%，碰撞 POI 比例为 66.15%；三层码本均使用全部 256 个 code。
+- 实现 MiniOneRec 风格的三层可学习残差码本、K-Means 初始化、可恢复 checkpoint 和全量逐轮碰撞评估。
+- 实现全量 SID 导出、重建误差、余弦相似度、码本使用率、perplexity、唯一性，以及末层 Sinkhorn 碰撞重分配。
+- 完成 2,337,178 条 0.6B Embedding 的 20 epoch 全量 RQ-VAE 训练；最终按原始 SID 碰撞率选择第 20 轮 checkpoint。
+- 第 20 轮全量重建余弦为 0.803871；原始最近邻 SID 唯一率为 50.98%，Sinkhorn 重分配后为 70.47%。
+- 最终仍有 39.95% 的 POI 位于碰撞组中，第一层仅使用 130/256 个 code；当前结果作为 RQ-VAE 基线，不作为最终唯一 POI 编码。
 - 完成 10,000 条固定评测订单的 Gate 0：订单、目标 POI、全量向量、POI ID、原始分片顺序和指纹全部通过检查。
 - 完成 E1：复用 POI 编码器配置生成原始 Query 向量，通过 Faiss GPU float32 `IndexFlatIP` 输出 Top-20、目标排名、整体指标和 Query 长度分桶指标。
 - 完成 E2：保持 E1 的评测数据、顺序、无 Instruction 输入和指标逻辑不变，使用 4B 向量完成 GPU float32 `GpuIndexFlatIP` 精确 Top-20 召回及逐行独立核验。
 
 ## 下一最小步骤
 
-由用户核验 E1/E2 对照：当前相同无 Instruction 口径下 0.6B 的整体和各长度分桶指标均高于 4B，但暂不自动选择最终模型。确认后再决定是否运行 Query Instruction 对照。RQ-VAE 方面仍需确认当前 SID 是否结合后续 GID 使用，或者先增加碰撞约束及对照实验。
+由用户核验 E1/E2 对照：当前相同无 Instruction 口径下 0.6B 的整体和各长度分桶指标均高于 4B，但暂不自动选择最终模型。RQ-VAE 方面需决定是结合 Geohash GID 缓解空间碰撞，还是先增加 K-Means 初始化样本、训练轮数及 RQ-KMeans 等对照。
 
 在用户确认前，不进入 GID、SFT 或后续训练流程，也不自动运行新的 Embedding 对照实验。

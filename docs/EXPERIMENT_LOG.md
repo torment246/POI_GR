@@ -120,50 +120,50 @@ python scripts/build_poi_embeddings.py \
 
 `manifest.json` 和 `progress.json` 均为 `completed`。NPY 文件头声明与实际文件大小一致，可通过 mmap 读取；ID 行数、唯一性和向量行数完全一致。对首尾及均匀分布的 4,606 条向量抽样检查未发现非有限值，归一化范数符合 float16 精度预期。4B 全量 POI 文本向量构建完成。
 
-## EXP-20260718-02：0.6B Embedding 全量 RQ-VAE SID 构建
+## EXP-20260719-01：北京 POI MiniOneRec 风格 RQ-VAE SID 构建
 
 - 状态：已完成，待用户验收
-- 日期：2026-07-18
-- 开始时间：2026-07-18 23:32:15（Asia/Shanghai）
-- 结束时间：2026-07-18 23:48:47（Asia/Shanghai）
+- 日期：2026-07-19
+- 开始/结束时间：2026-07-19 23:23:38—23:47:24（Asia/Shanghai）
 - 阶段：RQ-VAE Semantic ID
-- 目标：使用 Qwen3-Embedding-0.6B 的全量北京 POI 向量训练三层 RQ-VAE，导出所有 POI 的 RQ SID，并评估重建、码本使用和碰撞。
-- 假设：三层 256 大小的残差码本能够在保持可接受语义重建的同时形成有区分度的层级编码，且 dead-code 重置可以避免码本塌缩。
+- 目标：使用 Qwen3-Embedding-0.6B 的全量北京 POI 向量训练三层残差量化模型，导出所有 POI 的 RQ SID，并评估重建、码本使用和碰撞。
+- 假设：参考 MiniOneRec 的 MLP RQ-VAE 与末层 Sinkhorn 重分配，可以兼顾语义重建和 SID 唯一性。
 
 ### 数据与代码
 
 - 数据版本：`beijing_poi_clean_20260715_json`
 - Embedding：Qwen3-Embedding-0.6B，shape `[2337178, 1024]`，float16
 - Embedding 指纹：`d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
-- 训练/验证：2,313,806 / 23,372，固定随机种子 `20260718`
-- Git：`48d322d`，工作树包含尚未提交的 RQ-VAE 实现与配置
-- 任务签名：`b1dafaf01d9e09d0228b7c1705bee06fb58feaa6f2bb900e7da95da228197bdf`
+- 训练范围：每个 epoch 使用全部 2,337,178 条向量；本实验没有单独划分验证集
+- Git：以 `48d322d` 为基线，工作树包含尚未提交的 MiniOneRec 风格 RQ-VAE 实现与配置
+- 任务签名：`ec6b68764e21e7a307a01cc73d4e3b0d9a70f21a31cae8d49edd7b569ed02ab2`
 - 代码：`src/poi_gr/rqvae.py`
 - 入口：`scripts/train_rqvae.py`
 - 配置：`configs/rqvae_qwen3_embedding_0.6b.yaml`
-- 环境：Python 3.12.11、PyTorch 2.9.1、NVIDIA RTX A6000、BF16
+- 环境：Python 3.12.11、PyTorch 2.9.1、scikit-learn 1.7.1、NVIDIA RTX A6000、BF16
 
-### 正式配置
+### 方案与正式配置
+
+模型先用 MLP 将 1024 维向量编码为 32 维 latent，再依次量化三层残差，最后通过对称 MLP 解码器重建原始向量。Codebook 是可学习参数，通过反向传播更新，不使用 EMA 或 dead-code 重置。
 
 | 参数 | 取值 |
 |---|---|
-| Input / hidden / latent dims | 1024 / `[768, 512]` / 256 |
-| RQ levels | 3 |
-| Codebook size per level | 256 |
-| Codebook update | EMA |
-| EMA decay / epsilon | 0.99 / 1e-5 |
-| Dead-code threshold | 1.0 |
-| Commitment weight | 0.25 |
+| Input / hidden / latent dims | 1024 / `[768, 512, 256, 128, 64]` / 32 |
+| RQ levels / codebook size | 3 / 每层 256 |
+| Codebook 初始化 | 第一批 4,096 条向量分别初始化三层 K-Means，约占全量 0.175% |
+| K-Means | `max_iter=100`、`n_init=1`、每层使用 `20260719 + level` 作为种子 |
+| 训练分配 | 最近邻；训练阶段各层 Sinkhorn epsilon 均为 0 |
+| Loss | `reconstruction_mse + quantization_loss` |
+| Quantization loss | `codebook_loss + 0.25 × commitment_loss`，三层取均值 |
 | Batch / eval batch size | 4096 / 8192 |
 | Epochs | 20 |
-| Optimizer | AdamW |
-| Learning rate | 1e-3 → 1e-5 cosine decay |
-| Weight decay | 1e-5 |
+| Optimizer | AdamW，learning rate `1e-3`，weight decay `0` |
+| Learning-rate schedule | 1 epoch 线性 warmup，之后保持 `1e-3` |
 | Gradient clip norm | 1.0 |
-| Block shuffle size | 65,536 |
-| DataLoader workers | 4 |
-| Checkpoint metric | Validation reconstruction MSE（越小越好） |
-| Resume | Yes |
+| Block shuffle / workers | 65,536 / 4 |
+| Checkpoint metric | 每轮全量最近邻 SID 的重复 assignment 比例，越低越好 |
+| 导出碰撞处理 | 对碰撞组的末层残差做 Sinkhorn 重分配，epsilon `0.003`、50 次迭代、最多 20 轮 |
+| Seed / resume | `20260719` / Yes |
 
 运行命令：
 
@@ -172,81 +172,53 @@ python -u scripts/train_rqvae.py \
   --config configs/rqvae_qwen3_embedding_0.6b.yaml
 ```
 
-### 验收指标
-
-- 训练和验证重建 MSE、L2 误差及余弦相似度；
-- 三层码本的有效 code 数、使用率和 perplexity；
-- 全量 SID 行数、shape、dtype、唯一率和碰撞 POI 比例；
-- 碰撞组数量、P95 大小和最大碰撞组；
-- 最佳 epoch、运行时间和峰值显存。
-
 ### 产物与结果
 
 - 产物目录：`outputs/rqvae/beijing_poi_qwen3_embedding_0.6b/`
 - 运行状态：`completed`
-- 总耗时：992.12 秒（约 16 分 32 秒）
-- CUDA 峰值显存：allocated 0.333 GiB，reserved 0.572 GiB
-- 选择的 checkpoint：第 1 轮，依据为最小验证总损失 `0.483458`
+- 总耗时：1,425.52 秒（约 23 分 46 秒）
+- CUDA 峰值显存：allocated 0.301 GiB，reserved 0.436 GiB
+- 最低训练总损失：第 2 轮，`0.000483961`
+- 最低原始 SID 碰撞率：第 20 轮，`0.490216834`
+- 最终选择：`checkpoint_best_collision.pt`，第 20 轮
 
-首次按总验证损失选择第 1 轮时导出的诊断结果：
+第 20 轮 checkpoint 的全量重建结果：
 
 | 指标 | 结果 |
 |---|---:|
 | SID shape / dtype | `[2337178, 3]` / `uint16` |
-| 重建 MSE | 0.000391910 |
-| 重建 L2 | 0.401316 |
-| 重建余弦相似度 | 0.772753 |
-| 三层使用 code 数 | 256 / 256 / 256 |
-| 三层 perplexity | 189.74 / 185.18 / 187.68 |
-| 唯一 SID 数 / 比例 | 1,265,783 / 54.16% |
-| 碰撞 POI 数 / 比例 | 1,507,239 / 64.49% |
-| 碰撞组数量 | 435,844 |
-| 碰撞组 P95 / 最大大小 | 8 / 526 |
+| 重建 MSE | 0.000343832 |
+| 重建 L2 | 0.352084 |
+| 重建余弦相似度 | 0.803871 |
+| Quantization loss | 0.000418286 |
 
-训练末轮的验证重建 MSE 为 `0.000300804`，余弦相似度为 `0.830921`，三层码本均使用 256 个 code；但第 20 轮的 commitment loss 增长到 `0.761410`，使总验证损失高于第 1 轮。当前实现按总验证损失保存最佳 checkpoint，导致最终全量导出使用了重建能力明显较弱的第 1 轮模型。末轮 checkpoint 尚未进行全量碰撞评估，不能推断其唯一率。
+原始最近邻 SID 与最终 Sinkhorn 重分配结果：
 
-产物核验：`manifest.json` 状态为 `completed`；`training_history.jsonl` 共 20 轮；`sids.npy` 可通过 mmap 读取，shape、dtype、文件大小和取值范围正确；SID 行数与 `poi_ids.jsonl` 的 2,337,178 行一致；独立重算的唯一率、碰撞 POI 比例和最大碰撞组与 `metrics.json` 一致。
-
-### 2026-07-19 checkpoint 选择修正
-
-原实现使用 `reconstruction_l2 + 0.25 × commitment_loss` 的总验证损失选择 checkpoint。commitment loss 是训练编码器贴近码本的约束项，不直接衡量最终向量重建质量；本次训练中该项随 epoch 增长，导致总损失错误地偏向第 1 轮。
-
-修正后：
-
-- checkpoint 选择指标改为验证集 `reconstruction_mse`，越小越好；
-- 训练损失公式保持不变；
-- 复用现有第 20 轮 checkpoint，只重新导出和评估，不重新训练；
-- `checkpoint_best.pt` 已更新为第 20 轮模型；
-- 重新评估命令：
-
-```bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_qwen3_embedding_0.6b.yaml \
-  --reevaluate-checkpoint last
-```
-
-修正后的全量结果：
-
-| 指标 | 修正前：第 1 轮 | 修正后：第 20 轮 |
+| 指标 | 原始最近邻 SID | 最终导出 SID |
 |---|---:|---:|
-| 验证集选择指标：重建 MSE | 0.000392525 | 0.000300804 |
-| 全量重建 MSE | 0.000391910 | 0.000299567 |
-| 全量重建 L2 | 0.401316 | 0.306756 |
-| 全量重建余弦相似度 | 0.772753 | 0.831692 |
-| 三层使用 code 数 | 256 / 256 / 256 | 256 / 256 / 256 |
-| 三层 perplexity | 189.74 / 185.18 / 187.68 | 216.35 / 224.27 / 226.45 |
-| 唯一 SID 数 / 比例 | 1,265,783 / 54.16% | 1,218,799 / 52.15% |
-| 碰撞 POI 数 / 比例 | 1,507,239 / 64.49% | 1,545,955 / 66.15% |
-| 碰撞组数量 | 435,844 | 427,576 |
-| 碰撞组 P95 / 最大大小 | 8 / 526 | 9 / 355 |
+| 唯一 SID 数 / 比例 | 1,191,454 / 50.98% | 1,647,044 / 70.47% |
+| 重复 assignment 数 / 比例 | 1,145,724 / 49.02% | 690,134 / 29.53% |
+| 碰撞 POI 数 / 比例 | 1,575,192 / 67.40% | 933,668 / 39.95% |
+| 碰撞组数量 | 429,468 | 243,534 |
+| 碰撞组 P95 / 最大大小 | 9 / 491 | 10 / 140 |
 
-重新评估耗时 448.98 秒。修正后的 `sids.npy` shape 为 `[2337178, 3]`、dtype 为 `uint16`；独立重算的唯一 SID 数、碰撞 POI 数和最大碰撞组与 `metrics.json` 一致。
+码本使用情况：
+
+| 层级 | 原始使用 code 数 | 原始 perplexity | 最终使用 code 数 | 最终 perplexity |
+|---|---:|---:|---:|---:|
+| Level 1 | 130 / 256 | 102.61 | 130 / 256 | 102.61 |
+| Level 2 | 256 / 256 | 243.98 | 256 / 256 | 243.98 |
+| Level 3 | 256 / 256 | 250.66 | 256 / 256 | 162.84 |
+
+从第 2 轮到第 20 轮，训练总损失由 `0.000483961` 上升到 `0.000761983`，但重建 MSE 由 `0.000426925` 降至 `0.000344513`，余弦相似度由 `0.749090` 升至 `0.803429`，原始 SID 唯一率由 `45.57%` 升至 `50.98%`。总损失上升主要来自 quantization/commitment 项增长，不能单独用它判断 SID 质量。因此本实验按全量原始 SID 碰撞率选择第 20 轮，而不是按总损失选择第 2 轮。
+
+`manifest.json` 和 `metrics.json` 状态与上述配置、指标一致；`training_history.jsonl` 共 20 轮；`sids.npy` 可通过 mmap 读取，行数与 `poi_ids.jsonl` 的 2,337,178 行一致。重建指标基于原始最近邻量化结果，Sinkhorn 只在导出时重分配最后一层 token，不应把重分配后的 SID 唯一性解释为重建质量提升。
 
 ### 结论与下一步
 
-checkpoint 选择错误已经修正。第 20 轮模型的重建质量和码本 perplexity 明显优于第 1 轮，最大碰撞组从 526 降至 355；但唯一 SID 比例从 54.16% 降至 52.15%，碰撞 POI 比例从 64.49% 升至 66.15%。这说明重建质量和离散编码唯一性不是同一个目标，当前结果不能描述为所有指标都更好。
+本实验已跑通全量 MiniOneRec 风格 RQ-VAE 训练、checkpoint 恢复、逐轮碰撞评估、SID 导出和末层碰撞处理。Sinkhorn 将唯一 SID 比例从 50.98% 提升到 70.47%，最大碰撞组从 491 降到 140，但第一层仅使用 130 个 code，且最终仍有 39.95% 的 POI 位于碰撞组中。当前结果适合作为 RQ-VAE 基线，尚不能作为最终唯一 POI 编码。
 
-下一步由用户核验该取舍，再决定接受当前语义 SID 并依靠 GID 降低空间碰撞，还是先增加碰撞相关约束或对照配置。用户确认前不进入下一阶段。
+下一步由用户决定：结合 Geohash GID 缓解空间碰撞，或先增加 K-Means 初始化样本、训练轮数及 RQ-KMeans 等对照。用户确认前不进入 GID、SFT 或后续训练阶段。
 
 ## EXP-20260722-01：0.6B 无 Instruction 向量召回基线
 

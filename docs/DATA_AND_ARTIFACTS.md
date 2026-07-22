@@ -56,11 +56,11 @@
 
 RQ-VAE 产物约定：
 
-- `checkpoint_best.pt`、`checkpoint_last.pt`：最佳和最近一轮可恢复训练状态；
+- `checkpoint_best_loss.pt`、`checkpoint_best_collision.pt`、`checkpoint_last.pt`：最低训练损失、最低原始 SID 碰撞率和最近一轮的可恢复训练状态；
 - `sids.npy`：与源 Embedding 和 `poi_ids.jsonl` 行号严格一致的三层离散编码；
 - `metrics.json`：重建、码本使用率、SID 唯一性和碰撞指标；
-- `training_history.jsonl`：每个 epoch 的训练与验证指标；
-- `manifest.json`：源 Embedding 指纹、切分、完整配置、环境和产物位置。
+- `training_history.jsonl`：每个 epoch 的训练指标和全量原始 SID 碰撞指标；
+- `manifest.json`：源 Embedding 指纹、完整配置、环境、运行状态和产物位置。
 
 Embedding 召回评测产物约定：
 
