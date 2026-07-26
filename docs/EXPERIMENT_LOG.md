@@ -7,9 +7,10 @@
 | 阶段 | 文档 | 当前范围 | 状态 |
 |---|---|---|---|
 | 向量实验 | [向量实验](experiments/EMBEDDING.md) | 0.6B/4B POI 向量构建、Query 编码与精确召回评测 | 已完成首轮基线与模型对照 |
-| RQ-VAE 与 SID | [RQ-VAE 与 SID 实验](experiments/RQVAE_SID.md) | RQ-VAE、RQ-KMeans、碰撞分析、GID 与完整 SID | 已重置，等待重新设计首轮实验 |
+| RQ-VAE 与 SID | [RQ-VAE 与 SID 实验](experiments/RQVAE_SID.md) | RQ-VAE、RQ-KMeans、碰撞分析、GID 与完整 SID | 已完成 RQ-VAE 容量对比、GID 和 Dedup Final PID；RQ-KMeans 未开始 |
+| SFT | [SFT 数据与训练实验](experiments/SFT.md) | 订单主任务数据、词表扩展、正式训练与 Trie 约束评测 | 已完成两 epoch 全参数 SFT 及固定 10,000 条 Validation 的四 checkpoint 对比 |
 
-后续只有在新阶段开始正式实验时才新增一个阶段文档，例如 SFT 或约束解码；不得为每次运行单独创建 Markdown。
+后续只有在新的正式实验阶段首次开始时才新增一个阶段文档，例如 RQ-KMeans 或 no-result 增量分析；不得为每次运行单独创建 Markdown。
 
 ## 正式实验索引
 
@@ -19,6 +20,12 @@
 | `EXP-20260718-01` | 2026-07-18 | 向量构建 | 已完成 | Qwen3-Embedding-4B 完成 2,337,178 条 POI 编码，吞吐 114.86 条/秒 |
 | `EXP-20260722-01` | 2026-07-22 | 向量召回评测 | 已完成 | 0.6B 无 Instruction：Hit@10 28.25%，MRR@10 16.6907% |
 | `EXP-20260722-02` | 2026-07-22 | 向量召回评测 | 已完成 | 4B 无 Instruction：Hit@10 21.18%，低于相同口径的 0.6B |
+| `EXP-20260723-01` | 2026-07-23 | RQ-VAE 与 SID | 已完成 | 3 种码本容量 × 4 个固定 epoch 共 12 组北京全量 SID 评估完成；512×3/1024×3 epoch 20 的完整 Top 20 碰撞桶分析覆盖 5,982/4,037 条 POI，最大桶为 710/322 |
+| `EXP-20260723-02` | 2026-07-23 | GID 与完整 PID | 已完成 | Geohash6 + 1024×3 epoch 20 SID 的 PID 唯一率为 84.89%，解决 48.45% 的原 SID 碰撞 POI；残余碰撞 POI 为 557,154 |
+| `EXP-20260723-03` | 2026-07-23 | Dedup PID 映射 | 已完成 | 557,154 条碰撞 POI 按桶内 poi_id 稳定分配 Dedup Code，2,337,178 条最终 PID 全局唯一；映射确定性复跑哈希一致 |
+| `EXP-20260723-04` | 2026-07-23 | SFT 主任务数据 | 已完成 | 8,790,513 条订单按严格时间切分生成 Messages SFT 数据，PID 匹配率 100%；train/valid/test 为 7,586,410/597,421/606,682 |
+| `EXP-20260724-01` | 2026-07-24—25 | SFT 正式训练 | 已完成 | Qwen3-0.6B 单卡 A100 全参数训练 2 epoch；四个完整 checkpoint 的 Validation Loss 为 0.39634/0.28160/0.23992/0.22749，生成评测见下一条实验 |
+| `EXP-20260725-01` | 2026-07-25 | SFT Trie 约束评测 | 已完成（固定子集） | [固定 10,000 条 Validation、Beam=10 对比四个 checkpoint](experiments/SFT.md#exp-20260725-01sft-eval-001final-pid-trie-约束生成式检索评测)；2.0 epoch 的 HR@1/HR@10/NDCG@10 为 0.4577/0.8483/0.6599，未执行全量 Validation、Beam 探索或 Test |
 
 ## 记录规则
 
@@ -27,3 +34,9 @@
 - 每条正式记录包含目标与假设、数据版本、代码状态、配置、命令、环境、核心指标、产物、结论和下一步。
 - 只记录实际运行结果；失败或中止必须明确标注，不补写或猜测指标。
 - 临时 smoke、性能探测和调试过程不单独建文档，只在正式实验中保留最终采用的配置及必要说明。
+
+## 开发任务记录
+
+| Task | 日期 | 范围 | 验证 | 状态 |
+|---|---|---|---|---|
+| `SID-EVAL-001` | 2026-07-22 | 统一 SID 输入校验、碰撞指标、码本利用率、前缀类别纯度与热点 Case | 7 个合成单元测试和 CLI smoke test 通过；未运行北京全量数据 | 已完成 |

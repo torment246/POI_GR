@@ -21,8 +21,12 @@
 | `data/` | 内部源数据和后续生成数据 | 全部忽略 |
 | `models/` | 本地 Qwen3 生成模型和 Embedding 模型 | 全部忽略 |
 | `outputs/embeddings/` | 全量 Embedding、ID 映射和运行元信息 | 全部忽略 |
-| `outputs/rqvae/` | 后续 SID 实验的可重建产物；需要时再创建 | 全部忽略 |
+| `outputs/sid/rqvae/` | RQ-VAE checkpoint、SID 编码、指标和碰撞 Case | 全部忽略 |
+| `outputs/pid/` | Geohash GID、base PID、Dedup 映射和 Final PID | 全部忽略 |
 | `outputs/evaluation/` | Query 向量、行映射、召回结果、指标和运行元信息 | 全部忽略 |
+| `data/sft/` | SFT Messages、特殊 Token 表和 Tokenized Cache | 全部忽略 |
+| `outputs/sft/` | SFT checkpoint、训练日志、TensorBoard 和 Loss 结果 | 全部忽略 |
+| `outputs/eval/` | Final PID Trie、固定评测子集、生成候选和检索指标 | 全部忽略 |
 | `outputs/experiments/` | smoke test 和其他实验产物 | 全部忽略 |
 
 只有新流水线真正需要时才创建额外产物目录，不提前创建空目录。
@@ -54,7 +58,13 @@
 - `manifest.json`：输入指纹、模型参数、shape、dtype、环境和耗时；
 - `progress.json`：已安全写入的断点位置和任务状态；恢复时以该位置截断未确认的尾部数据。
 
-SID 产物的文件契约尚未重新确定。新实现必须在 smoke test 前明确 checkpoint、编码映射、指标和 manifest 的格式；所有产物继续放在 `outputs/` 并由 Git 忽略。
+SID 与 PID 产物约定：
+
+- RQ-VAE 训练目录保存固定 epoch checkpoint、训练状态、运行配置和指标；固定 checkpoint 的全量评估目录保存 `sid_codes.npy`、`sid_manifest.json`、`metrics.json` 和 `collision_cases.jsonl`；
+- Geohash PID 目录保存 `gid_codes.npy`、`pid_codes.npy`、`pid_manifest.json`、碰撞指标和残余碰撞 Case；
+- Dedup PID 目录保存 `final_pid_codes.npy`、`poi_pid_mapping.parquet` 和 `final_pid_manifest.json`，其中 POI ID 与 Final PID 均须全局唯一；
+- Final PID Trie 使用紧凑整数数组和 manifest 保存，构建输入必须与 Final PID 映射、Tokenizer 及 Token 清单一致；
+- 上述数组、映射、checkpoint、Case 和 manifest 均位于 `outputs/`，由 Git 忽略。
 
 Embedding 召回评测产物约定：
 
@@ -63,3 +73,11 @@ Embedding 召回评测产物约定：
 - `metrics.json`：整体召回指标和 Query 长度分桶指标；
 - `retrieval_results.npz`：Top-K POI 行号、相似度和目标排名；
 - `run_manifest.json`：Gate 0、模型配置、Faiss 设备、耗时、显存和产物指纹。
+
+SFT 与约束生成评测产物约定：
+
+- SFT 数据目录保存 Train/Valid/Test Messages JSONL、`special_tokens.json`、`manifest.json` 和 `stats.json`；
+- 扩词表模型及 Tokenizer 位于 `models/`，Tokenized Cache 位于 `data/sft/`；
+- 正式训练目录保存完整 checkpoint、resolved config、Trainer 状态、训练与验证指标、TensorBoard 和运行日志；
+- 生成评测目录保存 Final PID Trie、固定子集及其 manifest、分片进度、汇总指标和错误 Case；
+- Test 结果只有在 checkpoint、Beam 和评测配置冻结后才能生成并记录。

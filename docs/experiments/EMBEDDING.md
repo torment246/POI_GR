@@ -7,7 +7,7 @@
 - Qwen3-Embedding-0.6B 和 Qwen3-Embedding-4B 均已完成 2,337,178 条北京 POI 的全量向量构建。
 - 两个模型已在相同 10,000 条订单、相同无 Instruction 输入和相同 Faiss GPU 精确 Top-20 口径下完成对照。
 - 0.6B 的 Hit@1/10/20 为 12.03%/28.25%/34.51%，4B 为 9.72%/21.18%/25.12%。
-- 当前结果只说明 0.6B 在现有 POI 文本和无 Instruction Query 条件下更好，不外推到其他输入模板或 Instruction。
+- 当前结果只说明 0.6B 在现有 POI 文本和无 Instruction Query 条件下更好，不外推到其他输入模板或 Instruction；后续 RQ-VAE、SID 和 SFT 链路已选用 0.6B Embedding 作为输入基线。
 
 ## EXP-20260717-01：北京 POI 0.6B 全量向量构建
 

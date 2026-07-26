@@ -10,6 +10,7 @@ docs/PROJECT_STATUS.md        当前阶段、已确定事项和下一步
 docs/EXPERIMENT_LOG.md        正式实验阶段入口和总索引
 docs/experiments/EMBEDDING.md 向量构建、Query 编码和召回评测记录
 docs/experiments/RQVAE_SID.md RQ-VAE、RQ-KMeans、碰撞、GID 和 SID 阶段记录
+docs/experiments/SFT.md       SFT 数据、训练和 Trie 约束生成评测记录
 docs/DATA_AND_ARTIFACTS.md    数据、模型和产物管理规则
 docs/REPO_MAP.md              稳定目录职责
 configs/                       可复现任务配置
@@ -21,4 +22,4 @@ models/                       本地模型，Git 忽略
 outputs/                       本地向量和实验产物，Git 忽略
 ```
 
-当前保留 POI 文本向量与召回评测代码。SID 阶段从空实现重新开始，后续目录仍按已核验步骤逐项增加，不恢复旧实现。
+`src/poi_gr/` 当前包含 POI Embedding、RQ-VAE、SID 评估、Geohash/Dedup PID、SFT 数据、Final PID Trie 和生成式评测实现；`scripts/` 保存对应的命令行入口。真实数据、模型和可重新生成的实验产物继续保留在 Git 之外。

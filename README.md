@@ -8,13 +8,17 @@
 
 - 本地保留清洗后的内部 POI 数据，位于 `data/`，不进入 Git。
 - 本地保留 Qwen3 生成模型和 Embedding 模型，位于 `models/`，不进入 Git。
-- 当前已具备 POI 向量构建和 Embedding 精确召回评测代码；SID 阶段已重置，尚未建立新的 RQ-VAE、SFT 或生成式检索实现。
-- 新代码应从字段契约、数据读取和小样本测试开始逐步建立。
+- Qwen3-Embedding-0.6B/4B 已完成 2,337,178 条北京 POI 全量编码和固定 10,000 条订单精确召回对照，当前下游 SID 使用 0.6B Embedding。
+- 已完成三种 RQ-VAE 码本容量和 12 个 checkpoint 的北京全量 SID 评估，当前语义 SID 基线为 `1024×3 / epoch 20`。
+- 已完成 Geohash6 GID、确定性 Dedup Code 和全局唯一 Final PID 构建。
+- 已完成 Qwen3-0.6B 两轮全参数 SFT，以及固定 10,000 条 Validation、Beam=10 的四 checkpoint Trie 约束评测。
 - 第一版技术路线以 [`方案.md`](方案.md) 为准，按最小可核验步骤逐步实施。
+
+当前主链路为：POI 文本经 0.6B Embedding 和 RQ-VAE 得到语义 SID，与 Geohash6 GID、Dedup Code 组合为唯一 Final PID；生成模型根据 Query 和用户 GID 生成 PID，并通过全量 Final PID Trie 约束候选合法性。
 
 ## 下一阶段
 
-Qwen3-Embedding-0.6B 和 Qwen3-Embedding-4B 的北京 POI 全量向量均已完成并通过校验。两者无 Instruction 的 10,000 条订单 Faiss GPU 精确召回对照已完成：0.6B 的 Hit@1/10/20 为 12.03%/28.25%/34.51%，4B 为 9.72%/21.18%/25.12%，暂不自动选择模型。下一阶段从干净状态重新设计 SID 构建，先确认输入 Embedding、量化方案和验收指标，再实现最小 smoke test。
+固定 10,000 条 Validation 子集上，2.0 epoch checkpoint 的 HR@1/HR@10/NDCG@10 为 45.77%/84.83%/65.99%，且生成结构和 Final PID 合法率均为 100%。该结果尚不能替代完整 Validation 或 Test。下一步先冻结正式 checkpoint、Beam 和评测口径，再决定是否运行完整 Validation、Beam 规模对比和 Test；之后再开展 no-result 增量分析、RQ-KMeans 对照或偏好优化。
 
 轻量验证：
 
