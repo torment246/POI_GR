@@ -41,19 +41,20 @@
 
 - 默认不为每次任务创建 Markdown、审计、执行过程、迁移或时间戳报告。
 - 用户未明确要求报告文件时，只在最终回复中简洁总结。
-- 用户明确要求书面报告时，一次任务最多创建一个报告文件。
-- 项目状态、实验索引、数据产物和目录变化分别更新 `docs/PROJECT_STATUS.md`、`docs/EXPERIMENT_LOG.md`、`docs/DATA_AND_ARTIFACTS.md`、`docs/REPO_MAP.md`；实验详情更新到 `docs/experiments/` 下对应的阶段文档。
+- 用户明确要求书面报告时，一次任务最多创建一个报告文件；方法级实验文档的结构迁移不属于单次任务报告。
+- 项目状态、实验索引、数据产物和目录变化分别更新 `docs/PROJECT_STATUS.md`、`docs/EXPERIMENT_LOG.md`、`docs/DATA_AND_ARTIFACTS.md`、`docs/REPO_MAP.md`；实验详情更新到 `docs/experiments/` 下对应的方法文档。
 - 不为同一主题创建重复 Markdown。
 - `docs/` 下的项目文档统一使用中文；第三方模型自带文档不在此限制内。
 
 ## 实验记录
 
-- `docs/EXPERIMENT_LOG.md` 只维护阶段入口和正式实验索引，不堆叠完整实验详情。
-- 向量构建、Query 编码和向量召回实验统一记录到 `docs/experiments/EMBEDDING.md`。
-- RQ-VAE、RQ-KMeans、碰撞、GID 和完整 SID 实验统一记录到 `docs/experiments/RQVAE_SID.md`。
-- 新阶段只有在第一次正式实验开始时才创建一个阶段文档；不得为单次实验创建新的 Markdown。
+- `docs/EXPERIMENT_LOG.md` 只维护方法入口和正式实验索引，不堆叠完整实验详情。
+- 第一版方案的共享模型选型和完整链路实验统一记录到 `docs/experiments/V1_BASELINE.md`。
+- TIGER、GNPR-SID 和 GenPOI 的输入、标识符、训练与评测分别统一记录到 `docs/experiments/TIGER.md`、`docs/experiments/GNPR_SID.md` 和 `docs/experiments/GENPOI.md`。
+- 共享的 Embedding 对照只在 V1 文档登记一次，论文方法文档引用其产物，不重复创建实验记录。
+- 新方法只有在第一次正式实验开始时才创建一个方法文档；不得为单次实验创建新的 Markdown。
 - 实验编号使用 `EXP-YYYYMMDD-NN`，同一天从 `01` 递增。
-- 新实验先追加到所属阶段文档，再在 `docs/EXPERIMENT_LOG.md` 增加一行索引；跨文档的实验编号不得重复。
+- 新实验先追加到所属方法文档，再在 `docs/EXPERIMENT_LOG.md` 增加一行索引；跨文档的实验编号不得重复。
 - 每条实验记录必须包含：目标与假设、数据版本、代码提交或工作树状态、配置、命令、环境、核心指标、产物位置、结论和下一步。
 - 只记录实际运行结果；未运行、失败或中止的实验必须明确标注，不补写或猜测指标。
 - 纯代码整理不伪装成实验；只有影响项目阶段、实验配置或可复现性时才更新实验文档。

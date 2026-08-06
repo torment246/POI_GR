@@ -1,0 +1,79 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: genpoi
+  group: baseline
+  display_name: GenPOI 论文方法
+  status: partial
+  summary: 统一建模历史位置、历史 Query、历史交互 POI、当前位置和当前 Query。
+  paper: Revisiting General Map Search via Generative Point-of-Interest Retrieval
+
+task:
+  type: query_to_poi_with_history
+  target_fields: [query, user_lng, user_lat, poi_id, event_time]
+  history_fields: [query, user_lng, user_lat, poi_id, event_time]
+  max_history_events: 10
+
+identifier:
+  type: geope_geohash_rqvae_pid
+  token_order: [gid, sid, optional_dedup]
+
+pipeline:
+  data:
+    status: ready
+    notes: 旧版和 Centered 修正版均已基于 003 历史订单生成全量严格因果 Messages；12 天 Train、1 天 Validation、1 天 Test 分别为 7,586,410/597,421/606,682 条，最近 10 条历史按时间正序排列，空历史保留。当前候选使用 Centered 修正版 PID 和独立 Tokenized Cache。
+    commands:
+      - entrypoint: scripts/build_genpoi_sft_data.py
+        config: null
+        purpose: 按 12 天 Train、1 天 Validation、1 天 Test 构造最近 10 条历史的 GenPOI SFT 数据。
+  identifier:
+    status: ready
+    notes: 旧版 GeoPE32 已完成闭环；当前候选采用 Centered GeoPE32 + TIGER-RQVAE 1024×3，并完成 Geohash6 GID 与确定性 Dedup，2,337,178 条最终 PID 全局唯一。两版映射和下游数据相互独立。
+    commands:
+      - entrypoint: scripts/build_poi_embeddings.py
+        config: configs/embedding_bge_m3.yaml
+        purpose: 提供不含 GeoPE 的 BGE-M3 POI 文本 Embedding 起点。
+      - entrypoint: scripts/build_genpoi_geope_embeddings.py
+        config: null
+        purpose: 使用32个北京K-Means地理锚点和方位角分段旋转构建 GenPOI GeoPE 向量。
+      - entrypoint: scripts/train_rqvae.py
+        config: configs/rqvae_genpoi_bge_m3_geope.yaml
+        purpose: 复现旧版 GeoPE 向量的三层 256/512/1024 RQ-VAE。
+      - entrypoint: scripts/train_rqvae.py
+        config: configs/rqvae_genpoi_bge_m3_geope32_centered_tiger.yaml
+        purpose: 训练当前 Centered GeoPE32 + TIGER-RQVAE 三容量修正版。
+      - entrypoint: scripts/evaluate_sid.py
+        config: null
+        purpose: 复用 SID 碰撞、利用率和类别纯度评测。
+      - entrypoint: scripts/build_geohash_pid.py
+        config: null
+        purpose: 将 Geohash6 GID 前置到三层 GeoPE SID，构建九层 base PID。
+      - entrypoint: scripts/build_dedup_pid.py
+        config: null
+        purpose: 对残余碰撞桶分配确定性 Dedup Code，构建全局唯一 Final PID。
+  train:
+    status: partial
+    notes: 旧版 GenPOI 已完成四卡三轮正式 SFT；Centered 修正版复用 3,626 Token 模型，8,790,513 条 Messages 和 packed Train/Validation 2,935,702/214,860 条 Cache 已完成，6000D/A6000/A100 四卡入口通过 dry-run，但尚未启动正式训练。Test 均未进入缓存。
+    commands:
+      - entrypoint: scripts/validate_sft_tokenization.py
+        config: null
+        purpose: 仅扫描 Train/Valid，执行长度预检并构建可复用的 packed Tokenized Cache。
+      - entrypoint: run_train_genpoi_sft_4x6000d_3epoch.sh
+        config: configs/sft/genpoi_bge_m3_geope_1024x3_history10_query_gid_v1.yaml
+        purpose: 旧版 GenPOI 已完成的四卡 RTX PRO 6000D 三轮训练入口。
+      - entrypoint: run_train_genpoi_centered_sft_4x6000d_3epoch.sh
+        config: configs/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2.yaml
+        purpose: 使用四卡 RTX PRO 6000D 训练 Centered 修正版，并按 epoch 保存和验证。
+      - entrypoint: run_train_genpoi_centered_sft_4xa6000_3epoch.sh
+        config: configs/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2.yaml
+        purpose: 使用四卡 RTX A6000 训练 Centered 修正版的等价入口。
+      - entrypoint: run_train_genpoi_centered_sft_4a100_3epoch.sh
+        config: configs/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2.yaml
+        purpose: 使用四卡 A100 训练 Centered 修正版的等价入口。
+  evaluate:
+    status: ready
+    notes: 旧版已完成固定 10,000 条 Validation 的 SSP+TCG 评测，epoch 3 的 HR@1/HR@10/NDCG@10 为 0.5085/0.8713/0.698751，PID 合法率 100%；Centered 修正版须待新 checkpoint 产生后使用同一口径重新评测。
+    commands:
+      - entrypoint: scripts/evaluate_sft_retrieval.py
+        config: null
+        purpose: 提供约束生成和通用 HR/NDCG 评测基础。

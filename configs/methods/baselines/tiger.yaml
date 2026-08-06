@@ -1,0 +1,63 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: tiger
+  group: baseline
+  display_name: TIGER 生成式推荐 baseline
+  status: implemented
+  summary: 在 TIGER 四层 item identifier 基础上，适配地图检索的用户哈希、历史 Query、历史请求位置和历史 POI 序列。
+  paper: Recommender Systems with Generative Retrieval
+
+task:
+  type: map_search_adapted_sequential_poi_generation
+  target_fields: [query, user_lng, user_lat, poi_id, event_time]
+  history_fields: [query, user_lng, user_lat, poi_id, event_time]
+  max_history_events: 10
+
+identifier:
+  type: rqvae_semantic_id_with_collision
+  token_order: [s1, s2, s3, collision]
+  collision_assignment: zero_based_poi_id_lexicographic_within_sid
+  singleton_collision_code: 0
+
+pipeline:
+  data:
+    status: ready
+    notes: 已实现地图检索适配版数据入口：passenger_id 稳定哈希到 2000 个用户 Token；每条历史按请求 GID、原始 Query、四层 TIGER POI ID 排列；当前请求使用 GID 和 Query，空历史保留。
+    commands:
+      - entrypoint: scripts/build_tiger_sft_data.py
+        config: null
+        purpose: 按 12 天 Train、1 天 Validation、1 天 Test 构造最近 10 条历史的 TIGER SFT 数据。
+  identifier:
+    status: ready
+    notes: 已选定 BGE-M3 1024×3 / epoch 20，并按论文为每个 item 固定追加第四个 collision token；单例为 0，碰撞桶内按 poi_id 字典序确定性分配。
+    commands:
+      - entrypoint: scripts/build_poi_embeddings.py
+        config: configs/embedding_bge_m3.yaml
+        purpose: 构建 TIGER 使用的 BGE-M3 POI 内容 Embedding。
+      - entrypoint: scripts/train_rqvae.py
+        config: configs/rqvae_tiger_bge_m3.yaml
+        purpose: 训练 TIGER 架构的 256×3/512×3/1024×3 Semantic ID。
+      - entrypoint: scripts/evaluate_sid.py
+        config: null
+        purpose: 统一评估 SID 碰撞和码本使用率。
+      - entrypoint: scripts/build_tiger_identifiers.py
+        config: null
+        purpose: 为三层 SID 追加论文 collision token，构建固定四层且全局唯一的 TIGER item identifier。
+  train:
+    status: ready
+    notes: 5,426 个 TIGER Token 已原子化扩入 Qwen3-0.6B；Train/Valid 长度预检、GPU smoke、正式 packed Cache 和四卡 RTX PRO 6000D 三轮训练均已完成，epoch 1/2/3 checkpoint 完整，Test 未读取。
+    commands:
+      - entrypoint: scripts/validate_sft_tokenization.py
+        config: null
+        purpose: 仅扫描 Train/Valid，执行长度预检并构建可复用的 packed Tokenized Cache。
+      - entrypoint: run_train_tiger_sft_4x6000d_3epoch.sh
+        config: configs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1.yaml
+        purpose: 使用四卡 RTX PRO 6000D、全局 Batch 512 完成 3 epoch，并按 epoch 保存和验证。
+  evaluate:
+    status: ready
+    notes: 独立 evaluator 已按论文复现口径完成固定 10,000 条 Validation 无约束 Beam=10 评测；epoch 3 的 HR@1/HR@10/NDCG@10 为 0.5187/0.8716/0.704190，Valid ID Rate 为 0.74105。非法 identifier 保留原排名并计为 miss，不使用 Trie 后处理。
+    commands:
+      - entrypoint: scripts/evaluate_tiger_retrieval.py
+        config: null
+        purpose: 对 TIGER 四层 identifier 执行无约束 Beam 生成，并在冻结映射上计算 HR、NDCG 和 Valid ID Rate。

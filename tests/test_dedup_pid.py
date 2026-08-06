@@ -186,7 +186,6 @@ class DedupPidTest(unittest.TestCase):
         result = build_dedup_pid(
             manifest_path,
             output_dir,
-            expected_baseline=None,
         )
         table = pq.read_table(output_dir / "poi_pid_mapping.parquet")
         mapping = table.to_pydict()

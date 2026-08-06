@@ -31,14 +31,6 @@ EXPECTED_BASE_PID_TOKEN_ORDER = (
     "S2",
     "S3",
 )
-EXPECTED_PID001_BASELINE = {
-    "poi_count": 2_337_178,
-    "base_pid_distinct_count": 1_984_068,
-    "base_pid_colliding_poi_count": 557_154,
-    "base_pid_collision_bucket_count": 204_044,
-    "singleton_poi_count": 1_780_024,
-    "max_base_bucket_size": 322,
-}
 OUTPUT_FILENAMES = (
     "dedup_codes.npy",
     "final_pid_codes.npy",
@@ -263,7 +255,7 @@ def validate_base_metrics(
     existing_metrics: Mapping[str, Any],
     expected_baseline: Mapping[str, int] | None,
 ) -> dict[str, int]:
-    """Check recomputed base PID metrics against PID-001 and task constants."""
+    """Check recomputed base PID metrics against its PID-001 artifact."""
 
     existing = existing_metrics.get("gid6_sid_pid")
     if not isinstance(existing, dict):
@@ -563,7 +555,7 @@ def build_dedup_pid(
     output_dir: Path,
     *,
     dedup_capacity: int = 512,
-    expected_baseline: Mapping[str, int] | None = EXPECTED_PID001_BASELINE,
+    expected_baseline: Mapping[str, int] | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> DedupPidResult:
     """Build deterministic unique final PIDs and five PID-002 artifacts."""
@@ -576,7 +568,7 @@ def build_dedup_pid(
     base = load_base_pid_input(pid_manifest_path)
 
     if progress is not None:
-        progress("重算 base PID 指标并与 PID-001 关键基线逐项核对")
+        progress("重算 base PID 指标并与当前 PID-001 产物逐项核对")
     basic, _, _, _ = compute_basic_metrics(base.codes)
     baseline = validate_base_metrics(
         basic, base.metrics, expected_baseline=expected_baseline

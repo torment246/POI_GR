@@ -33,7 +33,19 @@ def set_args(argv=None):
     parser.add_argument("--train_on_prompt", type=int, choices=[0, 1], default=0, help="是否训练 Prompt")
     parser.add_argument("--gradient_checkpointing", type=int, choices=[0, 1], default=1, help="梯度检查点")
     parser.add_argument("--logging_steps", type=int, default=20, help="日志间隔")
+    parser.add_argument(
+        "--save_strategy",
+        choices=["steps", "epoch"],
+        default="steps",
+        help="Checkpoint 保存策略",
+    )
     parser.add_argument("--save_steps", type=float, default=0.5, help="Checkpoint 保存间隔")
+    parser.add_argument(
+        "--eval_strategy",
+        choices=["steps", "epoch"],
+        default="steps",
+        help="Validation 执行策略",
+    )
     parser.add_argument("--eval_steps", type=float, default=0.5, help="完整验证间隔")
     parser.add_argument("--save_total_limit", type=int, default=2, help="最多保留的 Checkpoint 数")
     parser.add_argument("--report_to", type=str, default="tensorboard", help="本地监控后端")
@@ -65,6 +77,12 @@ def validate_args(args, project_root):
         raise ValueError("nproc_per_node 必须大于 0")
     if args.batch_size <= 0 or args.gradient_accumulation_steps <= 0:
         raise ValueError("batch_size 和 gradient_accumulation_steps 必须大于 0")
+    if args.save_strategy == "steps" and args.save_steps <= 0:
+        raise ValueError("save_strategy=steps 时 save_steps 必须大于 0")
+    if args.eval_strategy == "steps" and args.eval_steps <= 0:
+        raise ValueError("eval_strategy=steps 时 eval_steps 必须大于 0")
+    if args.save_strategy == "epoch" and not float(args.num_epochs).is_integer():
+        raise ValueError("save_strategy=epoch 时 num_epochs 必须是整数")
 
     global_batch_size = (
         args.batch_size
@@ -155,8 +173,7 @@ def build_training_config(args, resolved):
         "logging_steps": args.logging_steps,
         "logging_first_step": True,
         "logging_dir": str(output_dir / "tensorboard"),
-        "save_strategy": "steps",
-        "save_steps": args.save_steps,
+        "save_strategy": args.save_strategy,
         "save_total_limit": args.save_total_limit,
         "save_only_model": False,
         "save_safetensors": True,
@@ -181,16 +198,73 @@ def build_training_config(args, resolved):
         "include_tokens_per_second": bool(args.include_tokens_per_second),
         "include_num_input_tokens_seen": True,
         "skip_memory_metrics": False,
-        "eval_strategy": "steps",
-        "eval_steps": args.eval_steps,
+        "eval_strategy": args.eval_strategy,
         "load_best_model_at_end": False,
         "predict_with_generate": False,
         "compute_accuracy": False,
         "ddp_timeout": 7200,
     }
+    if args.save_strategy == "steps":
+        config["save_steps"] = args.save_steps
+    if args.eval_strategy == "steps":
+        config["eval_steps"] = args.eval_steps
     if resolved["resume_path"] is not None:
         config["resume_from_checkpoint"] = str(resolved["resume_path"])
     return config
+
+
+def write_epoch_checkpoint_index(output_dir, expected_epochs):
+    """Record the standard step checkpoint corresponding to each full epoch."""
+
+    output_dir = Path(output_dir)
+    checkpoints = []
+    for path in output_dir.glob("checkpoint-*"):
+        suffix = path.name.removeprefix("checkpoint-")
+        if not suffix.isdigit():
+            continue
+        state_path = path / "trainer_state.json"
+        if not state_path.is_file():
+            continue
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        epoch = state.get("epoch")
+        if not isinstance(epoch, (int, float)):
+            continue
+        rounded_epoch = round(float(epoch))
+        if abs(float(epoch) - rounded_epoch) > 1e-4:
+            continue
+        global_step = state.get("global_step")
+        if not isinstance(global_step, int):
+            global_step = int(suffix)
+        checkpoints.append(
+            {
+                "epoch": int(rounded_epoch),
+                "global_step": global_step,
+                "checkpoint": path.name,
+            }
+        )
+    checkpoints.sort(key=lambda item: item["epoch"])
+    observed_epochs = [item["epoch"] for item in checkpoints]
+    required_epochs = list(range(1, int(expected_epochs) + 1))
+    if observed_epochs != required_epochs:
+        raise RuntimeError(
+            f"完整 Epoch Checkpoint 不一致：{observed_epochs} != {required_epochs}"
+        )
+    index_path = output_dir / "epoch_checkpoints.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "save_strategy": "epoch",
+                "num_train_epochs": float(expected_epochs),
+                "checkpoints": checkpoints,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return index_path
 
 
 def save_resolved_config(args, config, resolved):
@@ -271,6 +345,12 @@ def launch_training(args):
     sys.argv = [str(Path(__file__).resolve()), "train", str(runtime_config_path)]
     try:
         launcher.launch()
+        if args.save_strategy == "epoch":
+            index_path = write_epoch_checkpoint_index(
+                config["output_dir"],
+                args.num_epochs,
+            )
+            print(f"Epoch checkpoint index: {index_path}")
         return 0
     finally:
         sys.argv = original_argv

@@ -30,6 +30,11 @@ models:
     query_batch_size: 64
     query_encode_buffer_size: 1024
     query_max_seq_length: 128
+  bge_m3:
+    poi_embedding_config: configs/embedding_bge_m3.yaml
+    query_batch_size: 64
+    query_encode_buffer_size: 1024
+    query_max_seq_length: 128
 
 instructions:
   none: null

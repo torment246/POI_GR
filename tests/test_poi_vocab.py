@@ -77,6 +77,16 @@ class PoiVocabTest(unittest.TestCase):
         with self.assertRaises(PoiVocabError):
             load_requested_tokens(self.write_tokens(tokens))
 
+    def test_accepts_explicit_tiger_token_count(self) -> None:
+        tokens = [f"<TIGER_{index}>" for index in range(12)]
+        path = self.write_tokens(tokens)
+        self.assertEqual(
+            load_requested_tokens(path, expected_token_count=12),
+            tokens,
+        )
+        with self.assertRaises(PoiVocabError):
+            load_requested_tokens(path, expected_token_count=11)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,67 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: current_main_v1
+  group: current
+  display_name: 当前北京 Query→Final PID 主线
+  status: implemented
+  summary: 使用当前 Query、用户 Geohash6 和唯一 Final PID 的已验证无历史主线。
+  paper: null
+
+task:
+  type: query_to_poi
+  target_fields: [query, user_lng, user_lat, poi_id, event_time]
+  history_fields: []
+  max_history_events: null
+
+identifier:
+  type: geohash6_rqvae_dedup_pid
+  token_order: [gid_1, gid_2, gid_3, gid_4, gid_5, gid_6, sid_1, sid_2, sid_3, optional_dedup]
+
+pipeline:
+  data:
+    status: ready
+    notes: 已有订单到唯一 Final PID 的严格时间切分数据构建入口。
+    commands:
+      - entrypoint: scripts/build_sft_main_data.py
+        config: null
+        purpose: 构建当前无历史 Query 主任务 SFT 数据。
+  identifier:
+    status: ready
+    notes: POI Embedding、RQ-VAE、Geohash6、Dedup 和扩词表链路均已有实现。
+    commands:
+      - entrypoint: scripts/build_poi_embeddings.py
+        config: configs/embedding_qwen3_0.6b.yaml
+        purpose: 构建 POI 文本 Embedding。
+      - entrypoint: scripts/train_rqvae.py
+        config: configs/rqvae_beijing.yaml
+        purpose: 训练三层 RQ-VAE。
+      - entrypoint: scripts/export_rqvae_sid.py
+        config: configs/rqvae_beijing.yaml
+        purpose: 导出固定 checkpoint 的 Semantic SID。
+      - entrypoint: scripts/build_geohash_pid.py
+        config: null
+        purpose: 组合用户无关的 POI Geohash6 GID 与 Semantic SID。
+      - entrypoint: scripts/build_dedup_pid.py
+        config: null
+        purpose: 为碰撞 PID 分配确定性 Dedup Code。
+      - entrypoint: scripts/prepare_poi_vocab.py
+        config: null
+        purpose: 将 GID、SID 和 Dedup Token 加入生成模型词表。
+  train:
+    status: ready
+    notes: 已有 Qwen3-0.6B 非思考模式全参数 SFT 入口。
+    commands:
+      - entrypoint: run_train_sft.py
+        config: configs/sft/qwen3_0.6b_main_v1.yaml
+        purpose: 运行当前主线 SFT。
+  evaluate:
+    status: ready
+    notes: 已有 Final PID Trie 和约束 Beam Search 评测。
+    commands:
+      - entrypoint: scripts/build_pid_trie.py
+        config: null
+        purpose: 构建全部 Final PID 的紧凑 Trie。
+      - entrypoint: scripts/evaluate_sft_retrieval.py
+        config: null
+        purpose: 运行合法 PID 约束生成和 POI 召回评测。

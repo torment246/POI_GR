@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         required=True,
-        choices=("qwen3_0.6b", "qwen3_4b"),
+        choices=("qwen3_0.6b", "qwen3_4b", "bge_m3"),
         help="评测模型。",
     )
     parser.add_argument(
@@ -502,6 +502,26 @@ def _instruction_text(
     return template.format(query=query)
 
 
+def _pooling_description(encoder: Any) -> str:
+    pooling_modes = (
+        ("pooling_mode_cls_token", "cls"),
+        ("pooling_mode_mean_tokens", "mean"),
+        ("pooling_mode_max_tokens", "max"),
+        ("pooling_mode_mean_sqrt_len_tokens", "mean_sqrt_len"),
+        ("pooling_mode_weightedmean_tokens", "weighted_mean"),
+        ("pooling_mode_lasttoken", "last_token"),
+    )
+    for module in encoder:
+        active_modes = [
+            label
+            for attribute, label in pooling_modes
+            if bool(getattr(module, attribute, False))
+        ]
+        if active_modes:
+            return "+".join(active_modes)
+    return "unknown"
+
+
 def encode_queries(
     records: list[dict[str, Any]],
     model_config: dict[str, Any],
@@ -522,8 +542,6 @@ def encode_queries(
     )
     if query_model.device != "cuda":
         raise EvaluationError("Query 编码必须配置为 CUDA")
-    if query_model.padding_side != "left":
-        raise EvaluationError("Query 编码 padding_side 必须为 left")
     if query_model.torch_dtype != "bfloat16":
         raise EvaluationError("Query 编码 dtype 必须为 bfloat16")
     if not query_model.normalize_embeddings:
@@ -541,6 +559,9 @@ def encode_queries(
     embedding_dim = encoder.get_sentence_embedding_dimension()
     if not isinstance(embedding_dim, int) or embedding_dim <= 0:
         raise EvaluationError("无法确定 Query embedding 维度")
+    pooling = _pooling_description(encoder)
+    if pooling == "unknown":
+        raise EvaluationError("无法确定 Query encoder 的 pooling 方法")
     model_load_wall_seconds = time.perf_counter() - model_load_started
 
     queries = [
@@ -582,7 +603,7 @@ def encode_queries(
         "encode_buffer_size": query_model.encode_buffer_size,
         "max_seq_length": query_model.max_seq_length,
         "padding_side": query_model.padding_side,
-        "pooling": "last_token (from the reused SentenceTransformer model)",
+        "pooling": pooling,
         "normalize_embeddings": query_model.normalize_embeddings,
         "instruction": instruction,
         "model_load_seconds": model_load_seconds,
@@ -848,6 +869,7 @@ def compute_metrics(
 
 def build_reference_comparison(
     reference_manifest_path: Path,
+    current_run: str,
     current_metrics: dict[str, Any],
     current_query_metrics: dict[str, Any],
     current_faiss_metrics: dict[str, Any],
@@ -902,7 +924,7 @@ def build_reference_comparison(
     )
     return {
         "reference_run": "qwen3_0.6b_no_instruction",
-        "current_run": "qwen3_4b_no_instruction",
+        "current_run": current_run,
         "model_selection": "not_performed",
         "overall_metrics": overall,
         "query_length_buckets": buckets,
@@ -1039,6 +1061,7 @@ def main() -> int:
         total_seconds = time.perf_counter() - total_started
         comparison = build_reference_comparison(
             _resolve(evaluation["reference_run_manifest"]),
+            output_dir.name,
             metrics,
             query_metrics,
             faiss_metrics,

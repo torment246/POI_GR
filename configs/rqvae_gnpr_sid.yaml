@@ -1,0 +1,50 @@
+data:
+  input_dir: outputs/embeddings/gnpr_sid/history10_pluscode6_top10_hash8192_behavior_v1
+  expected_rows: 703306
+
+model:
+  input_dim: 9384
+  hidden_dims: [512, 256, 128]
+  latent_dim: 64
+  # 70 万 POI 已足够抑制过拟合；关闭 dropout，避免训练态码本利用率与导出态不一致。
+  dropout: 0.0
+
+loss:
+  reconstruction: balanced_mse
+  reconstruction_weighting: equal_positive_negative
+  quantization_weight: 1.0
+  commitment_beta: 0.25
+  diversity_weight: 0.25
+  diversity_implementation: straight_through_hard_utilization_encoder_only
+  released_diversity_scale: 0.05
+  diversity_temperature: 0.5
+
+initialization:
+  backend: faiss_gpu
+  sample_size: 100000
+  iterations: 20
+
+training:
+  seed: 2024
+  device: cuda
+  batch_size: 512
+  max_epochs: 20
+  checkpoint_epochs: [10, 20]
+  validation_basis_points: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  resume: true
+
+output_root: outputs/sid/gnpr_sid/hash8192_behavior_v1
+
+experiments:
+  GNPR-SID-256x3:
+    codebook_sizes: [256, 256, 256]
+    checkpoint_epochs: [10, 20]
+  GNPR-SID-512x3:
+    codebook_sizes: [512, 512, 512]
+    checkpoint_epochs: [20]
+  GNPR-SID-1024x3:
+    codebook_sizes: [1024, 1024, 1024]
+    checkpoint_epochs: [20]

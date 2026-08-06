@@ -1,0 +1,53 @@
+data:
+  embeddings: outputs/embeddings/beijing_poi_bge_m3_genpoi_geope32_centered/embeddings.npy
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3_genpoi_geope32_centered/poi_ids.jsonl
+  embedding_manifest: outputs/embeddings/beijing_poi_bge_m3_genpoi_geope32_centered/manifest.json
+  poi_data: data/beijing_poi_clean_20260715_json
+  finite_check_chunk_rows: 8192
+
+model:
+  input_dim: 1024
+  hidden_dim: 512
+  latent_dim: 256
+  rq_layers: 3
+  codebook_loss_weight: 1.0
+  commitment_loss_weight: 0.25
+  reconstruction_normalization: none
+  squared_error_reduction: element_mean
+
+initialization:
+  backend: faiss_gpu
+  sample_size: 500000
+  iterations: 20
+  batch_size: 8192
+  max_points_per_centroid: 2048
+
+training:
+  seed: 42
+  device: cuda
+  batch_size: 4096
+  block_rows: 32768
+  max_epochs: 20
+  early_stopping: false
+  checkpoint_epochs: [20]
+  validation_ratio: 0.01
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  gradient_clip_norm: 1.0
+  collapse_utilization_threshold: 0.01
+  resume: true
+  show_progress: true
+
+evaluation:
+  max_cases: 20
+  max_pois_per_case: 20
+
+output_root: outputs/sid/genpoi/bge_m3_geope32_centered_tiger_rqvae
+
+experiments:
+  GenPOI-CenteredGeoPE32-TIGER-RQVAE-256x3:
+    codebook_sizes: [256, 256, 256]
+  GenPOI-CenteredGeoPE32-TIGER-RQVAE-512x3:
+    codebook_sizes: [512, 512, 512]
+  GenPOI-CenteredGeoPE32-TIGER-RQVAE-1024x3:
+    codebook_sizes: [1024, 1024, 1024]

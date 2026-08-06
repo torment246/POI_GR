@@ -18,6 +18,7 @@ import numpy as np
 CACHE_SCHEMA_VERSION = "poi-sft-tokenized-v1"
 TRAIN_DATASET = "beijing_order_main_v1_train"
 VALID_DATASET = "beijing_order_main_v1_valid"
+DEFAULT_MAPPING_FILENAME = "poi_token_mapping.json"
 IGNORE_INDEX = -100
 
 
@@ -75,6 +76,7 @@ class SplitPreflight:
     row_count: int = 0
     sha256: str = ""
     over_128_count: int = 0
+    over_requested_cutoff_count: int = 0
     target_truncated_at_requested_cutoff: int = 0
     target_truncated_at_256: int = 0
 
@@ -173,7 +175,7 @@ def _process_batch(
     input_histogram: LengthHistogram,
     target_histogram: LengthHistogram,
     total_histogram: LengthHistogram,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     prompt_texts, target_texts = _format_batch(template, users, targets)
     prompt_encoded = tokenizer(
         prompt_texts,
@@ -203,6 +205,7 @@ def _process_batch(
     )
     return (
         int(np.count_nonzero(total_lengths > 128)),
+        int(np.count_nonzero(total_lengths > requested_cutoff)),
         int(np.count_nonzero(retained_target < target_lengths)),
         int(np.count_nonzero(retained_target_at_256 < target_lengths)),
     )
@@ -238,7 +241,12 @@ def preflight_lengths(
                 targets.append(target)
                 split.row_count += 1
                 if len(users) >= batch_size:
-                    over_128, truncated, truncated_at_256 = _process_batch(
+                    (
+                        over_128,
+                        over_requested,
+                        truncated,
+                        truncated_at_256,
+                    ) = _process_batch(
                         tokenizer,
                         template,
                         users,
@@ -249,12 +257,23 @@ def preflight_lengths(
                         total_histogram,
                     )
                     split.over_128_count += over_128
+                    split.over_requested_cutoff_count += over_requested
                     split.target_truncated_at_requested_cutoff += truncated
                     split.target_truncated_at_256 += truncated_at_256
                     users.clear()
                     targets.clear()
+                if line_number % 1_000_000 == 0:
+                    print(
+                        f"长度预检 {split.name}: {line_number:,} 行",
+                        flush=True,
+                    )
             if users:
-                over_128, truncated, truncated_at_256 = _process_batch(
+                (
+                    over_128,
+                    over_requested,
+                    truncated,
+                    truncated_at_256,
+                ) = _process_batch(
                     tokenizer,
                     template,
                     users,
@@ -265,6 +284,7 @@ def preflight_lengths(
                     total_histogram,
                 )
                 split.over_128_count += over_128
+                split.over_requested_cutoff_count += over_requested
                 split.target_truncated_at_requested_cutoff += truncated
                 split.target_truncated_at_256 += truncated_at_256
         split.sha256 = digest.hexdigest()
@@ -277,6 +297,9 @@ def preflight_lengths(
 
     total_rows = sum(split.row_count for split in splits)
     over_128_count = sum(split.over_128_count for split in splits)
+    over_requested_count = sum(
+        split.over_requested_cutoff_count for split in splits
+    )
     requested_truncated = sum(
         split.target_truncated_at_requested_cutoff for split in splits
     )
@@ -305,6 +328,8 @@ def preflight_lengths(
         "total_length": total_histogram.summary(include_p999=True),
         "over_128_count": over_128_count,
         "over_128_ratio": over_128_count / total_rows,
+        "over_requested_cutoff_count": over_requested_count,
+        "over_requested_cutoff_ratio": over_requested_count / total_rows,
         "target_truncated_at_requested_cutoff_count": requested_truncated,
         "target_truncated_at_effective_cutoff_count": truncated_at_effective,
         "splits": {
@@ -313,6 +338,9 @@ def preflight_lengths(
                 "rows": split.row_count,
                 "sha256": split.sha256,
                 "over_128_count": split.over_128_count,
+                "over_requested_cutoff_count": (
+                    split.over_requested_cutoff_count
+                ),
                 "target_truncated_at_requested_cutoff_count": (
                     split.target_truncated_at_requested_cutoff
                 ),
@@ -353,6 +381,10 @@ def _preprocess_smoke_cache(
     tokenizer_module: dict[str, Any],
     cutoff_len: int,
     preprocessing_batch_size: int,
+    train_dataset: str,
+    valid_dataset: str,
+    smoke_train_rows: int,
+    smoke_valid_rows: int,
 ) -> dict[str, int]:
     from datasets import DatasetDict, load_dataset
     from transformers import Seq2SeqTrainingArguments
@@ -363,7 +395,7 @@ def _preprocess_smoke_cache(
     from llamafactory.hparams import DataArguments
 
     dataset_info = {
-        TRAIN_DATASET: {
+        train_dataset: {
             "file_name": str(train_file.resolve()),
             "formatting": "sharegpt",
             "columns": {"messages": "messages"},
@@ -375,7 +407,7 @@ def _preprocess_smoke_cache(
                 "system_tag": "system",
             },
         },
-        VALID_DATASET: {
+        valid_dataset: {
             "file_name": str(valid_file.resolve()),
             "formatting": "sharegpt",
             "columns": {"messages": "messages"},
@@ -389,8 +421,8 @@ def _preprocess_smoke_cache(
         },
     }
     data_args = DataArguments(
-        dataset=f"{TRAIN_DATASET}",
-        eval_dataset=f"{VALID_DATASET}",
+        dataset=train_dataset,
+        eval_dataset=valid_dataset,
         dataset_dir=".",
         template="qwen3_nothink",
         cutoff_len=cutoff_len,
@@ -407,15 +439,16 @@ def _preprocess_smoke_cache(
     )
     datasets = {}
     for name, path, limit, is_eval in (
-        (TRAIN_DATASET, train_file, 10_000, False),
-        (VALID_DATASET, valid_file, 2_000, True),
+        (train_dataset, train_file, smoke_train_rows, False),
+        (valid_dataset, valid_file, smoke_valid_rows, True),
     ):
         raw = load_dataset(
             "json",
             data_files=[str(path.resolve())],
             split="train",
             cache_dir=str(raw_cache_dir),
-        ).select(range(limit))
+        )
+        raw = raw.select(range(min(limit, len(raw))))
         attr = get_dataset_list([name], dataset_info)[0]
         aligned = align_dataset(raw, attr, data_args, training_args)
         datasets["validation" if is_eval else "train"] = _get_preprocessed_dataset(
@@ -446,6 +479,11 @@ def build_tokenized_cache(
     tokenizer_module: dict[str, Any],
     workers: int,
     preprocessing_batch_size: int,
+    train_dataset: str,
+    valid_dataset: str,
+    mapping_filename: str,
+    smoke_train_rows: int,
+    smoke_valid_rows: int,
 ) -> dict[str, Any]:
     """Build the full packed cache plus fixed 10k/2k smoke cache."""
 
@@ -456,7 +494,9 @@ def build_tokenized_cache(
     import transformers
 
     output_dir = output_dir.resolve()
-    mapping_path = model_dir / "poi_token_mapping.json"
+    mapping_path = model_dir / mapping_filename
+    if not mapping_path.is_file():
+        raise TokenizationPreflightError(f"扩词表映射不存在：{mapping_path}")
     model_mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     cache_inputs = {
         "model_dir": str(model_dir.resolve()),
@@ -467,6 +507,9 @@ def build_tokenized_cache(
         "packing": True,
         "template": "qwen3_nothink",
         "train_on_prompt": False,
+        "train_dataset": train_dataset,
+        "valid_dataset": valid_dataset,
+        "mapping_filename": mapping_filename,
     }
     manifest_path = output_dir / "cache_manifest.json"
     if output_dir.exists():
@@ -496,8 +539,8 @@ def build_tokenized_cache(
             use_fast_tokenizer=True,
         )
         data_args = DataArguments(
-            dataset=TRAIN_DATASET,
-            eval_dataset=VALID_DATASET,
+            dataset=train_dataset,
+            eval_dataset=valid_dataset,
             dataset_dir=str(dataset_dir.resolve()),
             template="qwen3_nothink",
             cutoff_len=cutoff_len,
@@ -534,6 +577,10 @@ def build_tokenized_cache(
             tokenizer_module=tokenizer_module,
             cutoff_len=cutoff_len,
             preprocessing_batch_size=preprocessing_batch_size,
+            train_dataset=train_dataset,
+            valid_dataset=valid_dataset,
+            smoke_train_rows=smoke_train_rows,
+            smoke_valid_rows=smoke_valid_rows,
         )
         cache_manifest = {
             "schema_version": CACHE_SCHEMA_VERSION,
@@ -544,7 +591,16 @@ def build_tokenized_cache(
                 "train": len(dataset_module["train_dataset"]),
                 "validation": len(dataset_module["eval_dataset"]),
             },
-            "smoke_source_rows": {"train": 10_000, "validation": 2_000},
+            "smoke_source_rows": {
+                "train": min(
+                    smoke_train_rows,
+                    int(length_stats["splits"]["train"]["rows"]),
+                ),
+                "validation": min(
+                    smoke_valid_rows,
+                    int(length_stats["splits"]["valid"]["rows"]),
+                ),
+            },
             "smoke_packed_rows": smoke_rows,
         }
         (full_cache / "length_stats.json").write_text(
@@ -579,6 +635,11 @@ def validate_sft_tokenization(
     batch_size: int,
     workers: int,
     preprocessing_batch_size: int,
+    train_dataset: str = TRAIN_DATASET,
+    valid_dataset: str = VALID_DATASET,
+    mapping_filename: str = DEFAULT_MAPPING_FILENAME,
+    smoke_train_rows: int = 10_000,
+    smoke_valid_rows: int = 2_000,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if train_file.name == "test.jsonl" or valid_file.name == "test.jsonl":
         raise TokenizationPreflightError("本任务禁止读取 test.jsonl")
@@ -599,13 +660,67 @@ def validate_sft_tokenization(
         ),
     ]
     tokenizer, template, tokenizer_module = _load_lf_tokenizer_and_template(model_dir)
-    stats = preflight_lengths(
-        tokenizer,
-        template,
-        splits,
-        requested_cutoff,
-        batch_size,
-    )
+    mapping_path = model_dir / mapping_filename
+    if not mapping_path.is_file():
+        raise TokenizationPreflightError(f"扩词表映射不存在：{mapping_path}")
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    preflight_inputs = {
+        "model_dir": str(model_dir.resolve()),
+        "extended_tokenizer_sha256": mapping.get("extended_tokenizer_sha256"),
+        "train_path": str(train_file.resolve()),
+        "train_rows": splits[0].expected_rows,
+        "train_sha256": splits[0].expected_sha256,
+        "valid_path": str(valid_file.resolve()),
+        "valid_rows": splits[1].expected_rows,
+        "valid_sha256": splits[1].expected_sha256,
+        "requested_cutoff_len": requested_cutoff,
+        "template": "qwen3_nothink",
+        "train_on_prompt": False,
+    }
+    preflight_path = output_dir.with_name(f".{output_dir.name}.preflight.json")
+    if preflight_path.is_file():
+        try:
+            preflight_state = json.loads(
+                preflight_path.read_text(encoding="utf-8")
+            )
+        except json.JSONDecodeError as error:
+            raise TokenizationPreflightError(
+                f"预检状态不是合法 JSON：{preflight_path}"
+            ) from error
+        if preflight_state.get("inputs") != preflight_inputs:
+            raise TokenizationPreflightError(
+                f"已有预检状态与当前输入不一致：{preflight_path}"
+            )
+        stats = preflight_state.get("stats")
+        if not isinstance(stats, dict):
+            raise TokenizationPreflightError(
+                f"已有预检状态缺少 stats：{preflight_path}"
+            )
+        print(f"复用已完成的长度预检：{preflight_path}", flush=True)
+    else:
+        stats = preflight_lengths(
+            tokenizer,
+            template,
+            splits,
+            requested_cutoff,
+            batch_size,
+        )
+        preflight_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_preflight = preflight_path.with_name(
+            f"{preflight_path.name}.tmp-{os.getpid()}"
+        )
+        temporary_preflight.write_text(
+            json.dumps(
+                {"inputs": preflight_inputs, "stats": stats},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary_preflight, preflight_path)
+        print(f"长度预检状态已保存：{preflight_path}", flush=True)
     effective_cutoff = int(stats["effective_cutoff_len"])
     cache_manifest = build_tokenized_cache(
         model_dir=model_dir,
@@ -620,6 +735,11 @@ def validate_sft_tokenization(
         tokenizer_module=tokenizer_module,
         workers=workers,
         preprocessing_batch_size=preprocessing_batch_size,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+        mapping_filename=mapping_filename,
+        smoke_train_rows=smoke_train_rows,
+        smoke_valid_rows=smoke_valid_rows,
     )
     return stats, cache_manifest
 
@@ -647,13 +767,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=1000,
         help="LLaMA-Factory packing 分组大小",
     )
+    parser.add_argument(
+        "--train-dataset",
+        default=TRAIN_DATASET,
+        help=f"Train 数据注册名，默认 {TRAIN_DATASET}",
+    )
+    parser.add_argument(
+        "--valid-dataset",
+        default=VALID_DATASET,
+        help=f"Valid 数据注册名，默认 {VALID_DATASET}",
+    )
+    parser.add_argument(
+        "--mapping-filename",
+        default=DEFAULT_MAPPING_FILENAME,
+        help=f"扩词表映射文件名，默认 {DEFAULT_MAPPING_FILENAME}",
+    )
+    parser.add_argument(
+        "--smoke-train-rows",
+        type=int,
+        default=10_000,
+        help="一并构建的 smoke cache 最大 Train 原始行数",
+    )
+    parser.add_argument(
+        "--smoke-valid-rows",
+        type=int,
+        default=2_000,
+        help="一并构建的 smoke cache 最大 Valid 原始行数",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.cutoff_len not in (128, 256):
-        raise SystemExit("--cutoff-len 只允许 128 或 256")
+    if args.cutoff_len not in (128, 256, 512):
+        raise SystemExit("--cutoff-len 只允许 128、256 或 512")
+    if args.smoke_train_rows <= 0 or args.smoke_valid_rows <= 0:
+        raise SystemExit("smoke 行数必须大于 0")
     stats, cache_manifest = validate_sft_tokenization(
         model_dir=args.model_dir.resolve(),
         train_file=args.train_file.resolve(),
@@ -664,11 +813,17 @@ def main() -> None:
         batch_size=args.batch_size,
         workers=args.workers,
         preprocessing_batch_size=args.preprocessing_batch_size,
+        train_dataset=args.train_dataset,
+        valid_dataset=args.valid_dataset,
+        mapping_filename=args.mapping_filename,
+        smoke_train_rows=args.smoke_train_rows,
+        smoke_valid_rows=args.smoke_valid_rows,
     )
     print(
         "Token 预检与缓存完成："
         f"cutoff_len={stats['effective_cutoff_len']}，"
         f"超过128={stats['over_128_count']}，"
+        f"超过cutoff={stats['over_requested_cutoff_count']}，"
         "目标截断="
         f"{stats['target_truncated_at_effective_cutoff_count']}，"
         f"packed train/valid={cache_manifest['packed_rows']['train']}/"

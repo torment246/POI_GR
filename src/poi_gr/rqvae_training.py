@@ -34,14 +34,23 @@ class RQVAETrainingConfig:
     embeddings_path: Path
     poi_ids_path: Path
     embedding_manifest_path: Path
+    feature_input_dir: Path | None
+    feature_block_weights: tuple[float, float, float] | None
     poi_data_path: Path
     output_dir: Path
     input_dim: int
-    hidden_dim: int
+    hidden_dim: int | None
+    hidden_dims: tuple[int, ...]
     latent_dim: int
     codebook_sizes: tuple[int, ...]
     codebook_loss_weight: float
     commitment_loss_weight: float
+    reconstruction_loss_weight: float
+    diversity_loss_weight: float
+    diversity_scale: float
+    diversity_temperature: float
+    reconstruction_normalization: str
+    squared_error_reduction: str
     seed: int
     device: str
     batch_size: int
@@ -59,6 +68,7 @@ class RQVAETrainingConfig:
     kmeans_max_points_per_centroid: int
     finite_check_chunk_rows: int
     collapse_utilization_threshold: float
+    diversity_start_epoch: int
     resume: bool
     show_progress: bool
     max_rows: int | None
@@ -82,6 +92,51 @@ def _positive_float(value: Any, name: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
         raise RQVAETrainingError(f"{name} 必须大于 0")
     return float(value)
+
+
+def _model_hidden_dims(
+    model: dict[str, Any],
+) -> tuple[int | None, tuple[int, ...]]:
+    hidden_dim = model.get("hidden_dim")
+    hidden_dims = model.get("hidden_dims")
+    if hidden_dim is not None and hidden_dims is not None:
+        raise RQVAETrainingError(
+            "model.hidden_dim 与 model.hidden_dims 不能同时配置"
+        )
+    if hidden_dims is not None:
+        if not isinstance(hidden_dims, list) or not hidden_dims:
+            raise RQVAETrainingError("model.hidden_dims 必须是非空数组")
+        resolved = tuple(
+            _positive_int(value, "model.hidden_dims")
+            for value in hidden_dims
+        )
+        return None, resolved
+    resolved_single = _positive_int(hidden_dim, "model.hidden_dim")
+    return resolved_single, (resolved_single,)
+
+
+def _feature_block_weights(
+    data: dict[str, Any], *, has_feature_input: bool
+) -> tuple[float, float, float] | None:
+    payload = data.get("feature_block_weights")
+    if not has_feature_input:
+        if payload is not None:
+            raise RQVAETrainingError(
+                "data.feature_block_weights 只能与 feature_input_dir 一起使用"
+            )
+        return None
+    if payload is None:
+        return (1.0, 1.0, 1.0)
+    weights = _require_mapping(payload, "data.feature_block_weights")
+    expected = {"text", "category", "region"}
+    if set(weights) != expected:
+        raise RQVAETrainingError(
+            "data.feature_block_weights 必须且只能包含 text/category/region"
+        )
+    return tuple(
+        _positive_float(weights[name], f"data.feature_block_weights.{name}")
+        for name in ("text", "category", "region")
+    )
 
 
 def _resolve_path(value: Any, project_root: Path, name: str) -> Path:
@@ -187,6 +242,51 @@ def load_training_config(
         raise RQVAETrainingError(
             "training.collapse_utilization_threshold 必须在 [0, 1] 内"
         )
+    hidden_dim, hidden_dims = _model_hidden_dims(model)
+    reconstruction_normalization = str(
+        model.get("reconstruction_normalization", "none")
+    )
+    if reconstruction_normalization not in {"none", "l2"}:
+        raise RQVAETrainingError(
+            "model.reconstruction_normalization 只能是 none 或 l2"
+        )
+    squared_error_reduction = str(
+        model.get("squared_error_reduction", "element_mean")
+    )
+    if squared_error_reduction not in {"element_mean", "vector_sum"}:
+        raise RQVAETrainingError(
+            "model.squared_error_reduction 只能是 element_mean 或 vector_sum"
+        )
+    feature_input_dir = (
+        None
+        if data.get("feature_input_dir") is None
+        else _resolve_path(
+            data.get("feature_input_dir"),
+            project_root,
+            "data.feature_input_dir",
+        )
+    )
+    feature_block_weights = _feature_block_weights(
+        data, has_feature_input=feature_input_dir is not None
+    )
+    diversity_loss_weight = float(model.get("diversity_loss_weight", 0.0))
+    default_diversity_scale = 0.05 if diversity_loss_weight > 0 else 0.0
+    diversity_scale = float(
+        model.get("diversity_scale", default_diversity_scale)
+    )
+    diversity_temperature = float(model.get("diversity_temperature", 0.5))
+    if diversity_loss_weight < 0 or diversity_scale < 0:
+        raise RQVAETrainingError("Diversity loss 权重与 scale 不能为负数")
+    if diversity_temperature <= 0:
+        raise RQVAETrainingError("model.diversity_temperature 必须大于 0")
+    diversity_start_epoch = _positive_int(
+        training.get("diversity_start_epoch", 1),
+        "training.diversity_start_epoch",
+    )
+    if diversity_loss_weight > 0 and diversity_start_epoch > resolved_max_epochs:
+        raise RQVAETrainingError(
+            "启用 Diversity Loss 时，diversity_start_epoch 不能超过 max_epochs"
+        )
 
     return RQVAETrainingConfig(
         source_config=config_path.resolve(),
@@ -198,16 +298,28 @@ def load_training_config(
         embedding_manifest_path=_resolve_path(
             data.get("embedding_manifest"), project_root, "data.embedding_manifest"
         ),
+        feature_input_dir=feature_input_dir,
+        feature_block_weights=feature_block_weights,
         poi_data_path=_resolve_path(
             data.get("poi_data"), project_root, "data.poi_data"
         ),
         output_dir=resolved_output.resolve(),
         input_dim=_positive_int(model.get("input_dim"), "model.input_dim"),
-        hidden_dim=_positive_int(model.get("hidden_dim"), "model.hidden_dim"),
+        hidden_dim=hidden_dim,
+        hidden_dims=hidden_dims,
         latent_dim=_positive_int(model.get("latent_dim"), "model.latent_dim"),
         codebook_sizes=codebook_tuple,
         codebook_loss_weight=float(model.get("codebook_loss_weight", 1.0)),
         commitment_loss_weight=float(model.get("commitment_loss_weight", 0.25)),
+        reconstruction_loss_weight=_positive_float(
+            model.get("reconstruction_loss_weight", 1.0),
+            "model.reconstruction_loss_weight",
+        ),
+        diversity_loss_weight=diversity_loss_weight,
+        diversity_scale=diversity_scale,
+        diversity_temperature=diversity_temperature,
+        reconstruction_normalization=reconstruction_normalization,
+        squared_error_reduction=squared_error_reduction,
         seed=int(training.get("seed", 42)),
         device=resolved_device,
         batch_size=resolved_batch_size,
@@ -240,6 +352,7 @@ def load_training_config(
             "data.finite_check_chunk_rows",
         ),
         collapse_utilization_threshold=collapse_threshold,
+        diversity_start_epoch=diversity_start_epoch,
         resume=bool(training.get("resume", True)) if resume is None else resume,
         show_progress=(
             bool(training.get("show_progress", True))
@@ -264,6 +377,33 @@ def config_payload(config: RQVAETrainingConfig) -> dict[str, Any]:
             payload[key] = str(value)
     payload["codebook_sizes"] = list(config.codebook_sizes)
     payload["checkpoint_epochs"] = list(config.checkpoint_epochs)
+    if config.feature_block_weights is None:
+        payload.pop("feature_block_weights")
+    else:
+        payload["feature_block_weights"] = {
+            name: value
+            for name, value in zip(
+                ("text", "category", "region"),
+                config.feature_block_weights,
+                strict=True,
+            )
+        }
+    if config.hidden_dim is None:
+        payload.pop("hidden_dim")
+        payload["hidden_dims"] = list(config.hidden_dims)
+    else:
+        payload.pop("hidden_dims")
+    if config.reconstruction_normalization == "none":
+        payload.pop("reconstruction_normalization")
+    if config.squared_error_reduction == "element_mean":
+        payload.pop("squared_error_reduction")
+    if config.reconstruction_loss_weight == 1.0:
+        payload.pop("reconstruction_loss_weight")
+    if config.diversity_loss_weight == 0.0:
+        payload.pop("diversity_loss_weight")
+        payload.pop("diversity_scale")
+        payload.pop("diversity_temperature")
+        payload.pop("diversity_start_epoch")
     return payload
 
 
@@ -341,10 +481,118 @@ def _git_state(project_root: Path) -> dict[str, Any]:
         return {"revision": None, "worktree_status": None}
 
 
+def _validate_content_geo_artifacts(
+    config: RQVAETrainingConfig,
+) -> tuple[Any, dict[str, Any]]:
+    from .methods.gnpr_content_geo import (
+        GnprContentGeoError,
+        GnprContentGeoWeights,
+        open_content_geo_array,
+    )
+
+    assert config.feature_input_dir is not None
+    for path, name in (
+        (config.embedding_manifest_path, "Embedding manifest"),
+        (config.embeddings_path, "Embedding NPY"),
+        (config.poi_ids_path, "POI ID mapping"),
+    ):
+        if not path.is_file():
+            raise RQVAETrainingError(f"{name} 不存在：{path}")
+    with config.embedding_manifest_path.open("r", encoding="utf-8") as handle:
+        embedding_manifest = json.load(handle)
+    if (
+        not isinstance(embedding_manifest, dict)
+        or embedding_manifest.get("status") != "completed"
+    ):
+        raise RQVAETrainingError("Embedding manifest 状态不是 completed")
+    embeddings = np.load(config.embeddings_path, mmap_mode="r", allow_pickle=False)
+    declared_shape = tuple(
+        embedding_manifest.get("output", {}).get("shape", ())
+    )
+    declared_dtype = embedding_manifest.get("output", {}).get("dtype")
+    if tuple(embeddings.shape) != declared_shape or str(embeddings.dtype) != declared_dtype:
+        raise RQVAETrainingError("BGE 向量 shape 或 dtype 与 manifest 不一致")
+    try:
+        assert config.feature_block_weights is not None
+        feature_weights = GnprContentGeoWeights(*config.feature_block_weights)
+        feature_data, feature_manifest = open_content_geo_array(
+            config.feature_input_dir,
+            embeddings,
+            weights=feature_weights,
+        )
+    except GnprContentGeoError as error:
+        raise RQVAETrainingError(str(error)) from error
+    if feature_data.shape[1] != config.input_dim:
+        raise RQVAETrainingError(
+            f"融合输入维度 {feature_data.shape[1]} != model.input_dim {config.input_dim}"
+        )
+    source_signature = feature_manifest.get("inputs", {}).get(
+        "embedding_signature"
+    )
+    if source_signature != embedding_manifest.get("signature"):
+        raise RQVAETrainingError("融合输入引用的 BGE signature 与当前向量不一致")
+    full_rows = int(feature_data.shape[0])
+    effective_rows = full_rows if config.max_rows is None else min(config.max_rows, full_rows)
+    if effective_rows <= 1:
+        raise RQVAETrainingError("有效融合输入行数必须大于 1")
+
+    for start in tqdm(
+        range(0, effective_rows, config.finite_check_chunk_rows),
+        desc="BGE finite check",
+        disable=not config.show_progress,
+    ):
+        stop = min(start + config.finite_check_chunk_rows, effective_rows)
+        if not np.isfinite(embeddings[start:stop]).all():
+            raise RQVAETrainingError(
+                f"BGE 行区间 [{start}, {stop}) 存在 NaN 或 Inf"
+            )
+    fingerprint = ":".join(
+        (
+            str(source_signature),
+            str(feature_manifest.get("sha256", {}).get("category_indices")),
+            str(feature_manifest.get("sha256", {}).get("region_indices")),
+        )
+    )
+    return feature_data, {
+        "status": "passed",
+        "input_type": "gnpr_content_geo",
+        "full_rows": full_rows,
+        "effective_rows": effective_rows,
+        "embedding_shape": list(embeddings.shape),
+        "embedding_dtype": str(embeddings.dtype),
+        "input_shape": [full_rows, config.input_dim],
+        "input_dtype": "float32",
+        "embedding_manifest": str(config.embedding_manifest_path),
+        "embedding_fingerprint": fingerprint,
+        "feature_input_dir": str(config.feature_input_dir),
+        "feature_blocks": feature_manifest.get("feature_blocks"),
+        "feature_block_weights": {
+            "text": feature_weights.text,
+            "category": feature_weights.category,
+            "region": feature_weights.region,
+        },
+        "feature_block_squared_energy_ratio": {
+            "text": feature_weights.text**2 / feature_weights.normalization_scale**2,
+            "category": feature_weights.category**2 / feature_weights.normalization_scale**2,
+            "region": feature_weights.region**2 / feature_weights.normalization_scale**2,
+        },
+        "poi_ids_path": str(config.poi_ids_path),
+        "poi_ids_sha256": _sha256_file(config.poi_ids_path),
+        "poi_id_rows_scanned": effective_rows,
+        "poi_ids_unique": True,
+        "poi_id_validation_source": "completed content-geo alignment artifact",
+        "vectors_all_finite": True,
+        "validation_scope": "full" if config.max_rows is None else "prefix_smoke",
+    }
+
+
 def validate_embedding_artifacts(
     config: RQVAETrainingConfig,
-) -> tuple[np.ndarray, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any]]:
     """Validate the source manifest, mmap array, finite values, and aligned IDs."""
+
+    if config.feature_input_dir is not None:
+        return _validate_content_geo_artifacts(config)
 
     for path, name in (
         (config.embedding_manifest_path, "Embedding manifest"),
@@ -479,11 +727,17 @@ def create_fixed_indices(
 def build_model(config: RQVAETrainingConfig) -> RQVAE:
     return RQVAE(
         config.input_dim,
-        config.hidden_dim,
+        config.hidden_dims,
         config.latent_dim,
         config.codebook_sizes,
         codebook_loss_weight=config.codebook_loss_weight,
         commitment_loss_weight=config.commitment_loss_weight,
+        reconstruction_loss_weight=config.reconstruction_loss_weight,
+        diversity_loss_weight=config.diversity_loss_weight,
+        diversity_scale=config.diversity_scale,
+        diversity_temperature=config.diversity_temperature,
+        reconstruction_normalization=config.reconstruction_normalization,
+        squared_error_reduction=config.squared_error_reduction,
     )
 
 
@@ -646,6 +900,7 @@ def _metric_accumulator(
         "reconstruction_loss": 0.0,
         "codebook_loss": 0.0,
         "commitment_loss": 0.0,
+        "diversity_loss": 0.0,
         "reconstruction_cosine": 0.0,
         "code_counts": [np.zeros(size, dtype=np.int64) for size in codebook_sizes],
         "residual_norm_sums": np.zeros(len(codebook_sizes), dtype=np.float64),
@@ -661,6 +916,7 @@ def _update_metrics(
         "reconstruction_loss",
         "codebook_loss",
         "commitment_loss",
+        "diversity_loss",
         "reconstruction_cosine",
     ):
         value = float(getattr(output, name).detach().item())
@@ -690,6 +946,7 @@ def _finalize_metrics(accumulator: dict[str, Any]) -> dict[str, Any]:
             "reconstruction_loss",
             "codebook_loss",
             "commitment_loss",
+            "diversity_loss",
             "reconstruction_cosine",
         )
     }
@@ -776,7 +1033,10 @@ def train_one_epoch(
             rows = local_rows[start : start + config.batch_size]
             inputs = _batch_tensor(block, rows, device)
             optimizer.zero_grad(set_to_none=True)
-            output = model(inputs)
+            output = model(
+                inputs,
+                diversity_active=epoch >= config.diversity_start_epoch,
+            )
             if not torch.isfinite(output.total_loss):
                 raise RQVAETrainingError("train total loss 出现 NaN 或 Inf")
             output.total_loss.backward()
@@ -821,7 +1081,10 @@ def validate_one_epoch(
             for start in range(0, len(local_rows), config.batch_size):
                 rows = local_rows[start : start + config.batch_size]
                 inputs = _batch_tensor(block, rows, device)
-                output = model(inputs)
+                output = model(
+                    inputs,
+                    diversity_active=epoch >= config.diversity_start_epoch,
+                )
                 _update_metrics(accumulator, output, len(rows))
                 progress.update(len(rows))
     progress.close()
@@ -973,14 +1236,37 @@ def run_training(
         "input_validation": input_validation,
         "split": split_metadata,
         "model": {
-            "method": "vanilla_rqvae",
-            "encoder": [config.input_dim, config.hidden_dim, config.latent_dim],
-            "decoder": [config.latent_dim, config.hidden_dim, config.input_dim],
+            "method": (
+                "gnpr_content_geo_rqvae"
+                if config.feature_input_dir is not None
+                else "vanilla_rqvae"
+            ),
+            "encoder": [
+                config.input_dim,
+                *config.hidden_dims,
+                config.latent_dim,
+            ],
+            "decoder": [
+                config.latent_dim,
+                *reversed(config.hidden_dims),
+                config.input_dim,
+            ],
             "rq_layers": len(config.codebook_sizes),
             "codebook_sizes": list(config.codebook_sizes),
             "latent_dim": config.latent_dim,
             "codebook_loss_weight": config.codebook_loss_weight,
             "commitment_loss_weight": config.commitment_loss_weight,
+            "reconstruction_loss_weight": config.reconstruction_loss_weight,
+            "diversity_loss_weight": config.diversity_loss_weight,
+            "diversity_scale": config.diversity_scale,
+            "diversity_temperature": config.diversity_temperature,
+            "diversity_implementation": (
+                "straight_through_hard_utilization_encoder_only"
+                if config.diversity_loss_weight > 0
+                else None
+            ),
+            "reconstruction_normalization": config.reconstruction_normalization,
+            "squared_error_reduction": config.squared_error_reduction,
         },
         "optimizer": {
             "name": "Adam",
@@ -1098,6 +1384,10 @@ def run_training(
             ]
             epoch_record = {
                 "epoch": epoch,
+                "diversity_active": (
+                    config.diversity_loss_weight > 0
+                    and epoch >= config.diversity_start_epoch
+                ),
                 "train": train_metrics,
                 "validation": validation_metrics,
                 "monitor_sid": monitor_metrics,
@@ -1210,8 +1500,34 @@ def _config_from_payload(payload: dict[str, Any]) -> RQVAETrainingConfig:
         "output_dir",
     ):
         converted[key] = Path(converted[key])
+    if converted.get("feature_input_dir") is not None:
+        converted["feature_input_dir"] = Path(converted["feature_input_dir"])
+    else:
+        converted["feature_input_dir"] = None
     converted["codebook_sizes"] = tuple(converted["codebook_sizes"])
     converted["checkpoint_epochs"] = tuple(converted["checkpoint_epochs"])
+    if converted.get("feature_block_weights") is not None:
+        weights = converted["feature_block_weights"]
+        if isinstance(weights, dict):
+            converted["feature_block_weights"] = tuple(
+                weights[name] for name in ("text", "category", "region")
+            )
+        else:
+            converted["feature_block_weights"] = tuple(weights)
+    else:
+        converted["feature_block_weights"] = None
+    if "hidden_dims" in converted:
+        converted["hidden_dims"] = tuple(converted["hidden_dims"])
+        converted.setdefault("hidden_dim", None)
+    else:
+        converted["hidden_dims"] = (converted["hidden_dim"],)
+    converted.setdefault("reconstruction_normalization", "none")
+    converted.setdefault("squared_error_reduction", "element_mean")
+    converted.setdefault("reconstruction_loss_weight", 1.0)
+    converted.setdefault("diversity_loss_weight", 0.0)
+    converted.setdefault("diversity_scale", 0.0)
+    converted.setdefault("diversity_temperature", 0.5)
+    converted.setdefault("diversity_start_epoch", 1)
     return RQVAETrainingConfig(**converted)
 
 
@@ -1292,7 +1608,24 @@ def export_checkpoint_sid(
     export_batch_size = batch_size or config.batch_size
     if export_batch_size <= 0:
         raise RQVAETrainingError("export batch_size 必须大于 0")
-    embeddings = np.load(config.embeddings_path, mmap_mode="r", allow_pickle=False)
+    if config.feature_input_dir is None:
+        embeddings = np.load(
+            config.embeddings_path, mmap_mode="r", allow_pickle=False
+        )
+    else:
+        from .methods.gnpr_content_geo import (
+            GnprContentGeoWeights,
+            open_content_geo_array,
+        )
+
+        text_embeddings = np.load(
+            config.embeddings_path, mmap_mode="r", allow_pickle=False
+        )
+        embeddings, _ = open_content_geo_array(
+            config.feature_input_dir,
+            text_embeddings,
+            weights=GnprContentGeoWeights(*config.feature_block_weights),
+        )
     row_count = int(resolved["input_validation"]["effective_rows"])
     if row_count > len(embeddings):
         raise RQVAETrainingError("resolved effective_rows 超出 Embedding 行数")
@@ -1351,7 +1684,11 @@ def export_checkpoint_sid(
     manifest = {
         "schema_version": "sid-input-v1",
         "experiment_id": config.experiment_id,
-        "method": "vanilla_rqvae",
+        "method": (
+            "gnpr_content_geo_rqvae"
+            if config.feature_input_dir is not None
+            else "vanilla_rqvae"
+        ),
         "embedding": {
             "manifest": os.path.relpath(
                 config.embedding_manifest_path, evaluation_dir
@@ -1380,6 +1717,19 @@ def export_checkpoint_sid(
         "exported_at": exported_at,
         "export_seconds": time.perf_counter() - export_started,
     }
+    if config.feature_input_dir is not None:
+        manifest["feature_input"] = {
+            "manifest": os.path.relpath(
+                config.feature_input_dir / "manifest.json",
+                evaluation_dir,
+            ),
+            "shape": resolved["input_validation"]["input_shape"],
+            "dtype": resolved["input_validation"]["input_dtype"],
+            "feature_blocks": resolved["input_validation"]["feature_blocks"],
+            "feature_block_weights": resolved["input_validation"][
+                "feature_block_weights"
+            ],
+        }
     manifest_path = evaluation_dir / "sid_manifest.json"
     _write_json_atomic(manifest_path, manifest)
     metrics, cases = evaluate_sid(

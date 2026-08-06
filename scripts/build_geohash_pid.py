@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         "--sid-manifest",
         type=Path,
         required=True,
-        help="BJ-RQVAE-1024x3 epoch 20 的 sid_manifest.json。",
+        help="三层 1024 码本、epoch 20 的 sid_manifest.json。",
     )
     parser.add_argument(
         "--geohash-length",

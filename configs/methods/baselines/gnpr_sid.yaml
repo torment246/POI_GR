@@ -1,0 +1,98 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: gnpr_sid
+  group: baseline
+  display_name: GNPR-SID 地图检索适配 baseline
+  status: partial
+  summary: 使用 BGE-M3 文本、类别和 PlusCode6 区域构建全量 POI SID；仅对碰撞 SID 追加 Dedup Token，再以无时间、无用户 ID 的地图检索历史序列训练生成模型。
+  paper: Generative Next POI Recommendation with Semantic ID
+
+task:
+  type: map_search_generation
+  target_fields: [query, user_gid, poi_id]
+  history_fields: [query, gid, poi_id]
+  max_history_events: 10
+  paper_max_history_events: 50
+  prompt_excluded_fields: [event_time, target_time, passenger_id]
+
+identifier:
+  type: content_category_region_rqvae_sid
+  catalog_filter: null
+  representation_features:
+    - bge_m3_text
+    - category_code
+    - plus_code6
+  excluded_features:
+    - visit_time
+    - visitor_identity
+  beijing_input_dimensions:
+    text: 1024
+    category: 402
+    region: 766
+    total: 2192
+  fusion:
+    per_block_l2: true
+    concatenated_scale: 1/sqrt(3)
+    materialization: streaming_batch
+  rqvae:
+    hidden_dim: 512
+    latent_dim: 256
+    codebook_sizes_to_compare:
+      - [256, 256, 256]
+      - [512, 512, 512]
+      - [1024, 1024, 1024]
+    kmeans_initialization: true
+    reconstruction_loss: element_mean_mse
+    codebook_loss_weight: 1.0
+    commitment_loss_weight: 0.25
+    epochs: 20
+    selected_codebook_sizes: [512, 512, 512]
+    selected_epoch: 20
+  token_order: [s1, s2, s3, dedup_if_collision]
+  dedup_assignment:
+    rule: zero_based_poi_id_lexicographic_within_base_sid
+    singleton_has_dedup_token: false
+    paper_token_format: [a, b, c, d]
+
+pipeline:
+  data:
+    status: ready
+    notes: 复用既有 2,337,178 条 BGE-M3 向量和 004 的全量静态 category_code、PlusCode6；不读取时间和用户交互块，不过滤冷 POI。
+    commands:
+      - entrypoint: scripts/prepare_gnpr_content_geo_inputs.py
+        config: null
+        purpose: 按 BGE 行序生成紧凑类别和区域索引，训练时流式融合三个特征块。
+  identifier:
+    status: ready
+    notes: 三容量训练和全量评估已完成，选择 512×3/epoch 20；仅对碰撞 SID 追加 d0-d222，2,337,178 条最终 GNPR identifier 已全局唯一且全量复跑哈希一致。
+    commands:
+      - entrypoint: scripts/train_rqvae.py
+        config: configs/rqvae_gnpr_content_geo.yaml
+        purpose: 运行 256×3/512×3/1024×3 的 20 epoch content-geo 流式 RQ-VAE。
+      - entrypoint: scripts/evaluate_sid.py
+        config: null
+        purpose: 复用统一 SID 碰撞、码本利用率和前缀质量指标。
+      - entrypoint: scripts/build_gnpr_identifiers.py
+        config: null
+        purpose: 按论文规则仅为碰撞 SID 追加确定性 Dedup Token，并输出唯一 POI 映射。
+  train:
+    status: partial
+    notes: 无时间、无用户 ID 的 8,790,513 条地图检索 SFT 数据、1,805 Token 扩词表和正式 packed Cache 已完成；packed Train/Validation 为 2,758,797/201,947，Assistant 目标截断为 0。历史为 Query/GID/GNPR identifier，当前为 Query/GID，目标为条件 Dedup GNPR identifier；尚未运行 GPU smoke 或正式 SFT。
+    commands:
+      - entrypoint: scripts/build_gnpr_sft_data.py
+        config: null
+        purpose: 流式构建与 TIGER 同切分、历史 10 条、等样本量的 GNPR Messages 数据。
+      - entrypoint: scripts/validate_sft_tokenization.py
+        config: null
+        purpose: 精确统计 Train/Valid 长度并构建正式 packed Cache 和固定 smoke Cache。
+      - entrypoint: run_train_gnpr_sft_4x6000d_3epoch.sh
+        config: configs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.yaml
+        purpose: 四卡 RTX PRO 6000D 全参数 SFT 三轮，并按 epoch 保存三个完整 checkpoint。
+      - entrypoint: run_train_gnpr_sft_4a100_3epoch.sh
+        config: configs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.yaml
+        purpose: 四卡 A100 的等价三轮全参数 SFT 入口。
+  evaluate:
+    status: missing
+    notes: 使用固定一万条 Validation 和与 TIGER 一致的 HR/NDCG 口径，额外报告全量目录覆盖率与非法 identifier 比例。
+    commands: []

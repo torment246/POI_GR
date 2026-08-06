@@ -41,3 +41,7 @@ venv/
 .DS_Store
 .agents/
 .codex/
+
+# Local training-platform launchers
+/run_*.sh
+/run_train_single_pos_add_distill_mlp.py

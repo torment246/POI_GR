@@ -1,20 +1,321 @@
-# RQ-VAE 与 SID 实验
+# V1 Baseline 实验
 
-本文件记录从 POI Embedding 到离散 Semantic ID 的正式实验，包括 RQ-VAE、RQ-KMeans、碰撞分析、GID 与完整 SID。SFT 和生成式检索实验不记录在本文件中。
+本文件按 `方案.md` 第一版链路记录共享模型选型和最初可运行基线：POI 文本向量 → RQ-VAE SID → Geohash6 GID → Dedup Final PID → Qwen3-0.6B SFT → Final PID Trie 约束评测。后续论文复现只引用这里已经冻结的数据和共享向量实验，不重复登记。
 
-## 当前状态
+## 当前结论
 
-- 已完成 Vanilla RQ-VAE 首轮北京全量容量对比、Geohash6 Geo-Semantic PID 评估及确定性 Dedup 映射，正式实验为 `EXP-20260723-01（SID-002）`、`EXP-20260723-02（PID-001）` 和 `EXP-20260723-03（PID-002）`。
-- 当前基线固定使用 Qwen3-Embedding-0.6B；三组模型均训练满 50 epoch，并完成 epoch 20/30/40/50 共 12 组全量 SID 评估。
-- 已确认 `BJ-RQVAE-1024x3 / epoch 20` 为当前语义 SID 主基线，并完成 2,337,178 条 POI 的 Geohash6 GID、九层 base PID 与唯一 POI-PID 映射。
-- 下游订单 SFT 与 Trie 约束评测已开展并记录在 `SFT.md`；SID/PID 阶段尚未进入增量 Dedup 更新或 RQ-KMeans 对照。
+- 北京 2,337,178 条 POI 和 8,790,513 条订单已跑通第一版完整链路。
+- 三个文本编码方案中 BGE-M3 的固定 10,000 条精确召回最好，Hit@10/20 为 32.78%/40.81%；V1 下游产物因实验先后顺序仍使用 Qwen3-Embedding-0.6B。
+- V1 选择 Qwen `1024×3 / epoch 20` SID，经 Geohash6 和 Dedup 后 Final PID 全局唯一。
+- 固定 10,000 条 Validation、Beam=10 下，2.0 epoch checkpoint 的 HR@1/HR@10/NDCG@10 为 45.77%/84.83%/65.99%；尚未运行完整 Validation 或 Test。
 
-## 人工审核闸门
+## 实验记录
+## EXP-20260717-01：北京 POI 0.6B 全量向量构建
 
-1. 当前 PID 只使用已确认的 `BJ-RQVAE-1024x3 / epoch 20`，不自动切换其他 checkpoint。
-2. PID-002 仅持久化当前全量数据的初始 Dedup 分配；后续数据更新不得重新排序已有 POI，增量分配规则需单独审核。
-3. 未经确认，不进入 RQ-KMeans、增量 Dedup 或其他 SID/PID 优化阶段。
+- 状态：已完成
+- 日期：2026-07-17
+- 编码开始时间：2026-07-17 21:25:26（Asia/Shanghai）
+- 完成时间：2026-07-17 22:51:42（Asia/Shanghai）
+- 阶段：POI 文本与 Embedding
+- 数据：`beijing_poi_clean_20260715_json`
+- 输入行数：2,337,178
+- 输入指纹：`d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
+- 模型：Qwen3-Embedding-0.6B
+- 输入字段：`text`
+- ID 字段：`poi_id`
+- 输出目录：`outputs/embeddings/beijing_poi_qwen3_embedding_0.6b/`
 
+### 正式配置
+
+| 参数 | 取值 |
+|---|---|
+| Device | CUDA |
+| Batch size | 64 |
+| Encode buffer size | 8192 |
+| Max sequence length | 512 |
+| Model dtype | BF16 |
+| Attention | SDPA |
+| Padding side | Left |
+| Embedding dimension | 1024 |
+| Normalize embeddings | Yes |
+| Output dtype | float16 |
+| Resume | Yes |
+
+运行命令：
+
+```bash
+python scripts/build_poi_embeddings.py \
+  --config configs/embedding_qwen3_0.6b.yaml
+```
+
+### 正式结果
+
+| 指标 | 结果 |
+|---|---:|
+| 输入分片 | 16 |
+| 输入/ID/向量行数 | 2,337,178 |
+| 唯一 POI ID | 2,337,178 |
+| 向量 shape | `[2337178, 1024]` |
+| 向量 dtype | float16 |
+| 数据扫描耗时 | 49.05 秒 |
+| 模型加载耗时 | 7.93 秒 |
+| 编码耗时 | 5,176.54 秒 |
+| 总流水线耗时 | 约 1 小时 27 分 14 秒 |
+| 编码吞吐 | 451.49 条/秒 |
+| 峰值 allocated / reserved 显存 | 5.47 / 6.27 GiB |
+| `embeddings.npy` 大小 | 4,786,540,672 字节 |
+| 非有限向量值 | 0 |
+| 抽样 L2 范数 | 最小 0.9980，均值 1.0005，最大 1.0038 |
+
+`manifest.json` 和 `progress.json` 均为 `completed`。NPY 文件大小与头部声明一致，可通过 mmap 读取；ID 行数、唯一性和向量行数完全一致。
+## EXP-20260718-01：北京 POI 4B 全量向量构建
+
+- 状态：已完成
+- 日期：2026-07-18
+- 编码开始时间：2026-07-18 00:26:39（Asia/Shanghai）
+- 完成时间：2026-07-18 06:05:48（Asia/Shanghai）
+- 阶段：POI 文本与 Embedding
+- 数据：`beijing_poi_clean_20260715_json`
+- 输入行数：2,337,178
+- 输入指纹：`d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
+- 模型：Qwen3-Embedding-4B
+- 输入字段：`text`
+- ID 字段：`poi_id`
+- 输出目录：`outputs/embeddings/beijing_poi_qwen3_embedding_4b/`
+
+### 正式配置
+
+| 参数 | 取值 |
+|---|---|
+| Device | CUDA |
+| Batch size | 64 |
+| Encode buffer size | 8192 |
+| Max sequence length | 512 |
+| Model dtype | BF16 |
+| Attention | PyTorch SDPA |
+| Padding side | Left |
+| Embedding dimension | 2560 |
+| Normalize embeddings | Yes |
+| Output dtype | float16 |
+| Resume | Yes |
+
+运行命令：
+
+```bash
+python scripts/build_poi_embeddings.py \
+  --config configs/embedding_qwen3_4b.yaml
+```
+
+### 正式结果
+
+| 指标 | 结果 |
+|---|---:|
+| 输入分片 | 16 |
+| 输入/ID/向量行数 | 2,337,178 |
+| 唯一 POI ID | 2,337,178 |
+| 向量 shape | `[2337178, 2560]` |
+| 向量 dtype | float16 |
+| 数据扫描耗时 | 117.87 秒 |
+| 模型加载耗时 | 515.71 秒 |
+| 编码耗时 | 20,348.28 秒 |
+| 总流水线耗时 | 约 5 小时 49 分 42 秒 |
+| 编码吞吐 | 114.86 条/秒 |
+| 峰值 allocated / reserved 显存 | 14.49 / 16.26 GiB |
+| `embeddings.npy` 大小 | 11,966,351,488 字节 |
+| 抽样非有限向量值 | 0 |
+| 抽样 L2 范数 | 最小 0.9966，均值 1.0013，最大 1.0039 |
+
+`manifest.json` 和 `progress.json` 均为 `completed`。NPY 文件头声明与实际文件大小一致，可通过 mmap 读取；ID 行数、唯一性和向量行数完全一致。对首尾及均匀分布的 4,606 条向量抽样检查未发现非有限值，归一化范数符合 float16 精度预期。
+## EXP-20260722-01：0.6B 无 Instruction 向量召回基线
+
+- 状态：已完成
+- 日期：2026-07-22
+- 开始/结束时间：2026-07-22 11:31:56—11:36:47（Asia/Shanghai）
+- 阶段：POI Embedding 相关性评测 E1
+- 目标：验证 Qwen3-Embedding-0.6B 在不添加 Query Instruction 时，对北京全量 POI 候选库的精确向量召回能力。
+- 假设：复用 POI 端编码器、last-token pooling 和归一化配置，原始 Query 与 POI 向量的内积可作为后续模型及 Instruction 对照实验的基线。
+
+### 数据与代码
+
+- 评测数据：固定 10,000 条北京检索订单，日期范围 2026-07-01—2026-07-14
+- 评测数据 SHA256：`52b2bc62349dffaaf31444e03d012e75a22b5bedb4fea6327b8c7fe4f90282f2`
+- 唯一订单：10,000；唯一目标 POI：7,601
+- POI 候选库：2,337,178 条，输入指纹 `d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
+- POI Embedding：Qwen3-Embedding-0.6B，shape `[2337178, 1024]`，float16
+- Git：`48d322d`，工作树包含尚未提交的向量评测实现、配置及其他既有改动
+- 代码：`scripts/evaluate_embedding_retrieval.py`
+- 配置：`configs/embedding_retrieval_eval.yaml`
+- 环境：Python 3.10.20、PyTorch 2.9.1+cu128、Faiss GPU 1.8.0、NVIDIA RTX A6000
+
+Gate 0 全部通过：评测行数和唯一订单正确，Query/目标 POI 均非空；POI 向量和 ID 均为 2,337,178 行，ID 全部唯一且与排序后的原始分片逐行一致；10,000 条目标均存在于候选库；全量向量无 NaN/Inf，2,048 条抽样 L2 范数为 0.998047/1.000506/1.003797（最小/均值/最大）。
+
+### 正式配置
+
+| 参数 | 取值 |
+|---|---|
+| Query 输入 | 原始 `query`，无前缀或 Instruction |
+| Query batch / buffer | 256 / 2,048 |
+| Query max sequence length | 128 |
+| Model dtype / output dtype | BF16 / float16 |
+| Padding / pooling | Left / last-token |
+| Normalize embeddings | Yes |
+| Faiss index | GPU `IndexFlatIP`，精确检索 |
+| Faiss storage / input dtype | float32 / float32 |
+| Add / query batch | 32,768 / 64 |
+| Top-K | 20 |
+
+运行命令：
+
+```bash
+python -u scripts/evaluate_embedding_retrieval.py \
+  --config configs/embedding_retrieval_eval.yaml \
+  --model qwen3_0.6b \
+  --instruction none
+```
+
+### 正式结果
+
+| 指标 | 结果 |
+|---|---:|
+| Hit@1 | 12.03% |
+| Hit@3 | 19.09% |
+| Hit@5 | 23.13% |
+| Hit@10 | 28.25% |
+| Hit@20 | 34.51% |
+| MRR@10 | 16.6907% |
+| Top-20 命中 / 未命中 | 3,451 / 6,549 |
+
+Query 长度分桶：
+
+| 字符数 | 样本数 | Hit@1 | Hit@5 | Hit@10 | MRR@10 |
+|---|---:|---:|---:|---:|---:|
+| 1—2 | 2,927 | 0.92% | 3.38% | 5.06% | 1.95% |
+| 3—5 | 4,552 | 8.88% | 21.75% | 28.12% | 14.21% |
+| 6—10 | 1,796 | 27.56% | 46.94% | 54.62% | 35.88% |
+| >10 | 725 | 38.21% | 52.55% | 57.38% | 44.26% |
+
+### 性能与产物
+
+| 项目 | 结果 |
+|---|---:|
+| Gate 0 | 105.80 秒 |
+| 模型加载（内部计时 / 实际 wall time） | 43.00 / 115.10 秒 |
+| Query 编码 | 9.20 秒，1,087.43 条/秒 |
+| GPU 索引构建 | 51.62 秒 |
+| 10,000 条检索 | 7.22 秒 |
+| 总耗时 | 291.59 秒 |
+| Query 编码峰值 allocated / reserved | 3.48 / 4.32 GiB |
+| Faiss 观测显存增量峰值 | 8.92 GiB |
+
+- 产物目录：`outputs/evaluation/embedding_retrieval/qwen3_0.6b_no_instruction/`
+- Query 向量：`outputs/evaluation/embedding_retrieval/query_embeddings/qwen3_0.6b_no_instruction.npy`
+- Query shape/dtype：`[10000, 1024]` / float16
+- Query 抽样前的全量范数范围：0.998047—1.003810，均值 1.000798
+- 结果：`metrics.json`、`retrieval_results.npz`、`run_manifest.json`、`run.log`
+
+独立核验通过：Query 行映射与评测 JSONL 完全一致；Top-K shape 为 `[10000, 20]`；目标排名只包含 `-1` 或 1—20；整体指标重算一致；Query 向量、映射和召回结果 SHA256 均与 manifest 一致。
+
+### 结论与下一步
+
+E1 已形成可复现的无 Instruction 基线。召回效果随 Query 长度明显上升，1—2 字 Query 的 Hit@10 仅 5.06%，而 6—10 字和 10 字以上分别达到 54.62% 和 57.38%；这说明原始短 Query 的语义信息不足是当前基线的主要弱项，但仅凭本实验不能区分歧义、热度、地理约束缺失或订单标签噪声的贡献。
+## EXP-20260722-02：4B 无 Instruction 向量召回对照
+
+- 状态：已完成
+- 日期：2026-07-22
+- 正式运行时间：2026-07-22 12:55:36—13:02:36（Asia/Shanghai）
+- 阶段：POI Embedding 相关性评测 E2
+- 目标：在评测数据、输入形式和精确检索口径与 E1 完全一致时，评估 Qwen3-Embedding-4B 的无 Instruction 召回能力。
+- 假设：更大参数量的 Embedding 模型可能提高原始 Query 与 POI 文本的语义匹配能力；实验只报告对照结果，不自动选择模型。
+
+### 数据与代码
+
+- 评测数据：与 E1 相同的 10,000 条北京检索订单，SHA256 为 `52b2bc62349dffaaf31444e03d012e75a22b5bedb4fea6327b8c7fe4f90282f2`
+- E1 对齐：10,000 个 `order_id`、目标 `poi_id` 及行顺序逐行一致，行映射 SHA256 为 `86a37f3c4c0f01f6000e7eb39a5c57f9bfef2d595124e3a33263fc4eb5923610`
+- POI 候选库：2,337,178 条，输入指纹 `d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
+- POI Embedding：Qwen3-Embedding-4B，shape `[2337178, 2560]`，float16
+- Git：`48d322d`，工作树包含尚未提交的向量评测实现、配置及其他既有改动
+- 代码：`scripts/evaluate_embedding_retrieval.py`
+- 配置：`configs/embedding_retrieval_eval.yaml`
+- 环境：Python 3.10.20、NumPy 1.26.4、PyTorch 2.9.1+cu128、Faiss GPU 1.8.0、NVIDIA RTX A6000
+
+Gate 0 全部通过：评测集严格为 10,000 行且唯一订单为 10,000，Query/目标 POI 均非空；POI 向量 shape 为 `[2337178, 2560]`，ID 行数和唯一数均为 2,337,178，向量与排序后的原始 POI 分片逐行一致；10,000 条目标全部存在于候选库；全量向量无 NaN/Inf，2,048 条抽样 L2 范数为 0.996400/1.001324/1.003862（最小/均值/最大）。
+
+### 正式配置
+
+| 参数 | 取值 |
+|---|---|
+| Query 输入 | 原始 `query`，无前缀或 Instruction |
+| Query batch / buffer | 64 / 1,024 |
+| Query max sequence length | 128 |
+| Model dtype / output dtype | BF16 / float16 |
+| Padding / pooling | Left / last-token |
+| Normalize embeddings | Yes |
+| Query shape | `[10000, 2560]` |
+| Faiss index | GPU `GpuIndexFlatIP`，精确检索 |
+| Faiss storage / input dtype | float32 / float32 |
+| POI add 分批 | 1,000,000 + 1,337,178 |
+| Query search batch / Top-K | 64 / 20 |
+
+运行命令：
+
+```bash
+python -u scripts/evaluate_embedding_retrieval.py \
+  --config configs/embedding_retrieval_eval.yaml \
+  --model qwen3_4b \
+  --instruction none
+```
+
+### 正式结果
+
+| 指标 | E1：0.6B | E2：4B | E2 - E1 |
+|---|---:|---:|---:|
+| Hit@1 | 12.03% | 9.72% | -2.31 pp |
+| Hit@3 | 19.09% | 15.07% | -4.02 pp |
+| Hit@5 | 23.13% | 17.63% | -5.50 pp |
+| Hit@10 | 28.25% | 21.18% | -7.07 pp |
+| Hit@20 | 34.51% | 25.12% | -9.39 pp |
+| MRR@10 | 16.6907% | 13.0759% | -3.6148 pp |
+
+Query 长度分桶对照：
+
+| 字符数 | 样本数 | Hit@1（E1→E2） | Hit@5（E1→E2） | Hit@10（E1→E2） | MRR@10（E1→E2） |
+|---|---:|---:|---:|---:|---:|
+| 1—2 | 2,927 | 0.92%→0.51% | 3.38%→1.30% | 5.06%→2.43% | 1.95%→0.89% |
+| 3—5 | 4,552 | 8.88%→6.30% | 21.75%→14.17% | 28.12%→17.99% | 14.21%→9.54% |
+| 6—10 | 1,796 | 27.56%→23.16% | 46.94%→41.37% | 54.62%→48.22% | 35.88%→30.99% |
+| >10 | 725 | 38.21%→35.03% | 52.55%→46.48% | 57.38%→49.93% | 44.26%→40.07% |
+
+### 性能、显存与产物
+
+| 项目 | E1：0.6B | E2：4B |
+|---|---:|---:|
+| Gate 0 | 105.80 秒 | 171.06 秒 |
+| 模型加载（内部 / wall time） | 43.00 / 115.10 秒 | 93.59 / 154.57 秒 |
+| Query 编码 | 9.20 秒 | 18.04 秒 |
+| GPU 索引构建 | 51.62 秒 | 55.18 秒 |
+| 10,000 条检索 | 7.22 秒 | 16.44 秒 |
+| 总耗时 | 291.59 秒 | 420.16 秒 |
+| Query 峰值 allocated / reserved | 3.48 / 4.32 GiB | 8.50 / 9.08 GiB |
+| Faiss 观测显存增量峰值 | 8.92 GiB | 23.81 GiB |
+
+- 产物目录：`outputs/evaluation/embedding_retrieval/qwen3_4b_no_instruction/`
+- Query 向量：`outputs/evaluation/embedding_retrieval/query_embeddings/qwen3_4b_no_instruction.npy`
+- 结果：`metrics.json`、`retrieval_results.npz`、`run_manifest.json`、`run.log`
+- Query 编码后模型和 tokenizer 已释放；allocated/reserved 降至 8.13/20.00 MiB，进程结束后显存为 0 MiB。
+
+独立核验通过：Query 行映射与 E1、评测 JSONL 完全一致；Query shape/dtype、范数和 SHA256 正确；Top-K shape 为 `[10000, 20]`，分数均为有限 float32；重新流式读取 2,337,178 个 POI ID 并构造目标行号后，10,000 条目标排名与保存结果逐行一致，整体指标重算一致。
+
+### 执行异常与修正
+
+首次按 32,768 条直接向 GPU 分批 add，在 98% 时因 Faiss Flat 数据末次扩容需要同时保留旧缓冲和申请新缓冲而 OOM。第二次改用 CPU Flat 暂存时，在 90% 的主存扩容阶段被系统以退出码 137 终止。两次均未产生不完整召回结果，最终日志覆盖为成功运行日志。
+
+最终采用两批 GPU add：先加入 1,000,000 条，再加入剩余 1,337,178 条；建索引前按“最终索引 + 首批旧缓冲 + 4 GiB 余量”执行 35.83 GiB 显存门禁。该修正不改变 float32 存储、`GpuIndexFlatIP`、精确内积或 Top-20 口径。
+
+### 结论与下一步
+
+在完全相同的无 Instruction 评测口径下，4B 在整体指标和四个 Query 长度分桶上均低于 0.6B，且编码、检索耗时及显存占用更高。这只是当前 POI 文本构建方式与原始 Query 输入下的对照结果，不据此自动选择最终模型，也不外推到添加 Query Instruction 后的表现。
+
+下一步由用户核验 E1/E2 对照并决定模型或是否运行 `poi_en` Instruction；本实验完成后停止，不进入后续生成式检索阶段。
 ## EXP-20260723-01（SID-002）RQ-VAE 全量训练与 12 个 checkpoint SID 评估
 
 ### 目标与状态
@@ -210,7 +511,6 @@ python scripts/export_rqvae_sid.py \
 
 - 512×3 Top 20 共覆盖 5,982 条 POI，最大桶 710；1024×3 共覆盖 4,037 条，最大桶 322。1024×3 的最大热点规模明显下降，但热点结构从较宽的泛化语义桶更多转向品牌连锁网点、门牌和局部父子 POI。
 - 结果产物位于 `outputs/sid/analysis/rqvae_collision_cases/`：两个 Parquet 各 20 行，保留完整桶聚合指标、3～5 条代表样本、模式与自然语言分析；JSON 保留模式计数、口径和对比结论。
-
 ## EXP-20260723-02（PID-001）Geohash6 Geo-Semantic PID 评估
 
 ### 目标与假设
@@ -281,7 +581,6 @@ SID-only 重算结果与既有 epoch 20 `metrics.json` 的 `basic` 指标逐字�
 - Geohash6 使 distinct ratio 提升 16.3571 个百分点，并使 colliding POI ratio 下降 22.4010 个百分点；空间前缀对跨区域 SID 碰撞有效。
 - 若目标是 POI 严格一一映射，则仍需要处理 557,154 条残余碰撞 POI，Dedup 容量上限至少为 322；但 Top 20 主要是合理的局部父子实体和门牌细分，是否增加 Dedup Code 不能只依据唯一率决定。
 - 本实验在此停止，不自动构建 Dedup Code，不评估 Geohash4/5，也不进入 RQ-KMeans、SFT 或下一任务。
-
 ## EXP-20260723-03（PID-002）Dedup Code 与唯一 POI-PID 映射
 
 ### 目标、输入与配置
@@ -312,3 +611,347 @@ python scripts/build_dedup_pid.py \
 - Manifest：`outputs/pid/BJ-RQVAE-1024x3-e20-G6-Dedup/final_pid_manifest.json`，SHA256 为 `251d85af5607b4b73091b3ca3d6ae0fdda76ece6c03ab8ca4db7e12de3497a2a`。
 - 相同输入完整复跑后映射表 SHA256 不变；映射表 `poi_id` 和 `final_pid_key` 均为 2,337,178 个不同值，最终 PID 唯一率为 100%。
 - 初始 Dedup 映射已持久化。本实验到此停止；未实现增量更新，也未进入 POI-SID 对齐、订单、SFT、Trie、约束解码、RQ-KMeans 或其他实验。
+## EXP-20260723-04（SFT-DATA-001）订单主任务 SFT 数据
+
+### 目标与假设
+
+- 主任务定义为“原始 Query + 用户位置 Geohash6 → 目标 POI 唯一 Final PID”。假设严格时间切分、唯一 PID 标签和不改变原始 Query 的首版数据，可作为后续 SFT smoke test 的可复现输入基线。
+- 本实验只构建和验证 Messages JSONL，不包含 POI-PID 辅助对齐、负样本、采样、用户历史、时间特征、tokenizer 修改或模型训练。
+
+### 数据、代码与环境
+
+- 订单输入实际使用 `data/beijing_order_clean_20260701_20260714_json/` 的 32 个 JSONL 分片。任务最初给出的 `beijing_poi_clean_20260715_json` 是 POI 主表目录，已由用户校正，不用于本实验。
+- 真实订单字段包含预计的 `order_id/searchid/query/disp_lng/disp_lat/create_time/source_dt/poi_id` 等字段，并额外包含订单日期、展示区域和 POI 快照日期字段；额外字段不进入 SFT。
+- 唯一 PID 映射为 `BJ-RQVAE-1024x3-e20-G6-Dedup`，映射 SHA256 为 `050a2a90223e7f521434360d1608ce60a39326392752c36c65dfe7458beeacf0`。
+- 代码基线提交为 `4cf01c252aa49d50b98c443205397ef1204f89b8`，运行使用包含 SID、RQ-VAE、PID 与 SFT-DATA-001 实现的未提交工作树。
+- 环境为 Python 3.10.20、NumPy 1.26.4、PyArrow 19.0.1。
+
+### Messages 格式与处理规则
+
+User 内容固定为：
+
+~~~text
+<QUERY>{原始 query}</QUERY>
+<USER_GID><G_x1><G_x2><G_x3><G_x4><G_x5><G_x6></USER_GID>
+~~~
+
+Assistant 内容固定为九层单例 PID 或十层 Dedup PID：
+
+~~~text
+<G_g1><G_g2><G_g3><G_g4><G_g5><G_g6><S1_x><S2_x><S3_x>[<D_x>]
+~~~
+
+- 唯一过滤规则为 `query is null` 或 `query.strip()` 为空；本次全量数据实际没有空 Query。
+- 非空 Query 保留原文；不删除重复订单，不做 Query 长度过滤、纠错、标准化或采样。
+- 用户位置使用原始 `disp_lng/disp_lat` 按标准 Geohash6 编码，不做坐标转换。
+- 单例 PID 不输出 Dedup Token，`-1` 仅是固定宽度映射的终止哨兵；特殊 Token 表不包含 `<D_-1>`。
+- 时间切分严格使用 `create_time`：2026-07-01 至 07-12 为 train，07-13 为 valid，07-14 为 test；`source_dt` 仅逐行核验日期一致性。
+
+### 配置与命令
+
+~~~bash
+python scripts/build_sft_main_data.py \
+  --orders-dir data/beijing_order_clean_20260701_20260714_json \
+  --pid-mapping outputs/pid/BJ-RQVAE-1024x3-e20-G6-Dedup/poi_pid_mapping.parquet \
+  --pid-manifest outputs/pid/BJ-RQVAE-1024x3-e20-G6-Dedup/final_pid_manifest.json \
+  --output-dir data/sft/beijing_order_main_v1 \
+  --train-start 2026-07-01 \
+  --train-end 2026-07-12 \
+  --valid-date 2026-07-13 \
+  --test-date 2026-07-14 \
+  --geohash-length 6
+~~~
+
+### 核心结果
+
+| 指标 | 结果 |
+|---|---:|
+| 原始订单 / 保留样本 | 8,790,513 / 8,790,513 |
+| 空 Query | 0 |
+| Train / Valid / Test | 7,586,410 / 597,421 / 606,682 |
+| 唯一 Query | 1,574,244 |
+| 唯一目标 POI / 全量覆盖率 | 520,333 / 22.2633% |
+| PID 匹配率 | 100% |
+| 需要 Dedup 的样本 / 比例 | 2,508,120 / 28.5321% |
+
+### 产物、验证与结论
+
+- 输出目录为 `data/sft/beijing_order_main_v1/`，严格只包含 `train.jsonl`、`valid.jsonl`、`test.jsonl`、`special_tokens.json`、`manifest.json` 和 `stats.json`。
+- Manifest SHA256 为 `f254e6f2ad8c0591732887163a1211a46e9718f4071674886c12b26360334ce9`。
+- 全量预检未发现非法用户坐标、未匹配 POI、PID 不完整、时间解析失败、日期越界或 `source_dt` 不一致；三份 JSONL 已逐行回读核验 Messages、用户 GID、目标 PID 和行数守恒。
+- 相同输入完整复跑后六个输出文件 SHA256 全部一致，数据顺序、sample ID 与序列化结果确定。
+- 该数据可作为后续 SFT smoke test 的候选输入，但本实验不自动进入训练、tokenizer 修改、Trie 或约束解码。
+## EXP-20260724-01（SFT-001）Qwen3-0.6B 订单主任务全参数 SFT
+
+### 目标与假设
+
+- 使用 Qwen3-0.6B 全参数微调学习“原始 Query + 用户 Geohash6 → 唯一 Final PID”，只对 Assistant PID 序列计算自回归交叉熵。
+- 假设扩展后的 3,620 个 POI Token 能作为原子 Token 稳定训练，且两轮训练可建立首个 teacher-forcing Validation Loss 基线。
+- 本实验只训练和评估 Train/Valid，不读取 Test，不执行生成、Trie、HR@K、NDCG@K 或 POI-PID 辅助对齐。
+
+### 数据、模型与词表
+
+- 原始 Train/Valid 为 7,586,410/597,421 条，SHA256 分别为 `4ed3f3849e0beb10df500f013bc08b4663b0dca5df92dde9c8b3cb4a7ec9ffe4` 和 `14dabc842ba4623f19b2d9e21cafa026917d333db78016956cc4bcfc506ba187`。
+- 训练复用 packing 后的 Tokenized Cache：Train 2,344,413 行、Validation 185,277 行；缓存 Manifest SHA256 为 `960ea4a03e4802370e801bb37d1883479b207623b21d3d7db5194cc777c47743`。缓存只包含 `train` 和 `validation` 两个 split。
+- 基础模型为 `models/Qwen3-0.6B/`，模型 SHA256 为 `f47f71177f32bcd101b7573ec9171e6a57f4f4d31148d38e382306f42996874b`，配置 SHA256 为 `660db3b73d788119c04535e48cf9be5f55bc3100841a718637ae695b442f27dd`。
+- 扩词表模型为 `models/Qwen3-0.6B-POI-Vocab-v1/`。Tokenizer 由 151,669 扩展至 155,289，新增 3,620 个普通原子 Token；模型词表同步为 155,289，输入 Embedding 与 LM Head 保持绑定。
+- 扩展后 Tokenizer SHA256 为 `e7147bfb2084c48f620405b38575f1495e1cf825d945fb7ef04190810c7173ca`；`poi_token_mapping.json` SHA256 为 `665aaf9fed32a1e7606051078c77f16b2f7c45e1ea139c8641249c7ec0f1f424`。
+
+### 序列预检与 Smoke
+
+| 长度 | P50 | P90 | P95 | P99 | P99.9 | Max |
+|---|---:|---:|---:|---:|---:|---:|
+| Input | 22 | 25 | 28 | 37 | 54 | 776 |
+| Target | 11 | 12 | 12 | 12 | — | 12 |
+| Total | 33 | 37 | 40 | 48 | 65 | 787 |
+
+- Train+Valid 共 237 条总序列超过 128 Token，占 0.002896%；目标 PID 在 `cutoff_len=128` 下截断数为 0，因此正式训练保持 128。
+- 固定前 10,000 条 Train 和前 2,000 条 Valid 的 20-update-step smoke 已通过 Token、label mask、finite loss/gradient、checkpoint 保存恢复和连续 step 检查。Smoke 权重及输出按用户要求在正式训练前清理，不作为正式实验产物保留。
+
+### 配置、命令与环境
+
+~~~bash
+bash run_train_sft_single_a100_2epoch.sh
+~~~
+
+- 单卡 A100，`per_device_train_batch_size=64`、`gradient_accumulation_steps=8`，全局有效 Batch Size 为 512；`packing=true`、`cutoff_len=128`、BF16、全参数训练、关闭 gradient checkpointing。
+- AdamW，学习率 `5e-5`，weight decay `0.01`，cosine scheduler，warmup ratio `0.03`，max grad norm `1.0`，seed/data seed 均为 42。
+- 共 2 epoch、9,158 个 update step；每 0.5 epoch 完整验证并保存可恢复 checkpoint，不启用 early stopping 或 best-checkpoint 自动选择。
+- 环境为 Python 3.10.20、LLaMA-Factory 0.9.4、Transformers 4.52.4、PyTorch 2.9.1+cu128、CUDA runtime 12.8。代码基线提交为 `4cf01c252aa49d50b98c443205397ef1204f89b8`，运行使用包含 SFT-001 实现和平台入口的未提交工作树。
+- Resolved Config SHA256 为 `b2fa61b5f32f7f6164e6e57e8943e45c0b40f8f3944ba13be3aa8721d00cd159`。
+
+### Checkpoint 与核心指标
+
+下表的 Train Loss 是 checkpoint 前最近一次 `logging_steps=20` 的局部窗口值，并列出实际日志 step；Validation Loss 来自完整 185,277 行 packed Validation 集。
+
+| Checkpoint | 实际 epoch | 局部 Train Loss（日志 step） | Validation Loss | Validation 相对前一节点改善 |
+|---|---:|---:|---:|---:|
+| `checkpoint-2290/` | 0.500109 | 0.3886（2280） | 0.396341 | — |
+| `checkpoint-4580/` | 1.000218 | 0.2628（4580） | 0.281600 | 28.95% |
+| `checkpoint-6870/` | 1.500328 | 0.1854（6860） | 0.239919 | 14.80% |
+| `checkpoint-9158/` | 2.000000 | 0.1740（9140） | 0.227494 | 5.18% |
+
+- 四个 checkpoint 均包含 `model.safetensors`、optimizer、scheduler、trainer state 和 RNG state，可用于标准恢复。
+- 全程平均 Train Loss 为 0.458500；该值包含训练初期高损失阶段，不等价于最终局部 Train Loss。
+- 训练耗时 10:48:59.95，训练吞吐为 120.412 packed samples/s、0.235 update steps/s、15,412.699 tokens/s；最后一次完整 Validation 耗时 0:08:46.22。
+- Trainer 报告训练阶段 GPU peak delta 为 37,825 MiB；结合训练前、分配增量和峰值增量估算进程绝对峰值约 43.66 GiB。
+- 日志未出现 Traceback、OOM、RuntimeError、NaN、Inf 或异常终止；训练后期局部 grad norm 稳定在约 0.8～0.9。
+
+### 产物、结论与下一步
+
+- 正式产物位于 `outputs/sft/qwen3_0.6b_main_v1_a100_e2/`，包括四个完整 checkpoint、resolved config、trainer state、Train/Eval 结果、TensorBoard event、终端日志和 loss 曲线。
+- Validation Loss 从 0.5 epoch 的 0.396341 连续下降至 2.0 epoch 的 0.227494，总降幅 42.60%，在 teacher-forcing 口径下尚未出现验证损失反弹。
+- 边际收益持续递减，1.5→2.0 epoch 仅改善 5.18%；局部 Train/Validation Loss 间距在第二轮扩大。因此当前只能判定 2.0 epoch 的 teacher-forcing loss 最低，不能据此宣称其正式检索效果最佳。
+- 截至 SFT-001 完成时，阶段状态为“训练完成，等待约束解码评估”。后续 `EXP-20260725-01（SFT-EVAL-001）` 已在固定口径下比较四个 checkpoint 的合法 PID 生成率和 HR@K/NDCG@K；正式推理 checkpoint 是否冻结仍以该实验的审核结论为准。
+## EXP-20260725-01（SFT-EVAL-001）Final PID Trie 约束生成式检索评测
+
+### 目标与假设
+
+- 构建覆盖全部 2,337,178 条 Final PID 的紧凑整数 Trie，并验证单例九层 PID、Dedup 十层 PID 和 EOS 的合法分支约束。
+- 使用相同的固定 Validation 子集和 Beam=10 比较 0.5、1.0、1.5、2.0 epoch 四个 checkpoint。假设约束解码能够保证候选 PID 合法，并用相同数据顺序判断训练轮数带来的相对变化。
+- 原计划执行完整 597,421 条 Validation、Beam 探索和冻结后的 Test；因完整评测耗时较长，按用户确认将本轮缩小为固定 10,000 条 Validation 子集、仅 Beam=10。未执行完整 Validation、Beam 对比、配置冻结或 Test 读取。
+
+### 数据、代码与环境
+
+- Validation 来源为 2026-07-13 的 `data/sft/beijing_order_main_v1/valid.jsonl`，共 597,421 条，SHA256 为 `14dabc842ba4623f19b2d9e21cafa026917d333db78016956cc4bcfc506ba187`。
+- 固定子集按 `sample_id` 字典序选择最小的 10,000 条，再按原始源行号恢复顺序；子集 SHA256 为 `a2e0366d3d8f582e53a5293b687dc08f85b2960d60c7fb44d2fd02168063a944`，子集 Manifest SHA256 为 `4c23ec4797ed0fed023ef5e49d7714c3dd1d406fae4179976e6a04ac8ea7b4a7`。相同输入重复调用会复核并复用同一子集。
+- 四组评测使用 `outputs/sft/qwen3_0.6b_main_v1_a100_e2/` 下的 `checkpoint-2290/4580/6870/9158`，Tokenizer 为 `models/Qwen3-0.6B-POI-Vocab-v1/`。
+- 代码基线提交为 `4cf01c252aa49d50b98c443205397ef1204f89b8`，运行使用包含 Trie 和生成评测实现的未提交工作树。
+- 环境为 Python 3.10.20、LLaMA-Factory 0.9.4、Transformers 4.52.4、PyTorch 2.9.1+cu128，GPU 为单卡 NVIDIA RTX A6000 48 GB。
+
+### Trie、配置与命令
+
+- Trie 使用 CSR 风格的 `child_offsets/child_token_ids/child_node_ids` 和终止节点数组，不为每个节点创建 Python dict。共 6,863,886 个节点、6,863,885 条边和 2,337,178 个唯一叶子；文件大小 128,520,240 bytes，加载数组内存 128,519,600 bytes，核心构建耗时 9.14 秒。
+- Prompt 使用与训练一致的 LLaMA-Factory `qwen3_nothink` 模板；正式运行前固定校验 100 条，确认不包含目标 PID 或 `<think>`，generation prompt、EOS、PAD、attention mask 和左 padding 均正确。
+- 解码固定为 Trie 开启、BF16、`num_beams=10`、`num_return_sequences=10`、`max_new_tokens=11`、`length_penalty=1.0`、`do_sample=false`、`early_stopping=true` 和归一化 sequence score 排序。实际 batch size 为 128，分片大小为 1,000。
+
+~~~bash
+python scripts/build_pid_trie.py \
+  --pid-mapping outputs/pid/BJ-RQVAE-1024x3-e20-G6-Dedup/poi_pid_mapping.parquet \
+  --pid-manifest outputs/pid/BJ-RQVAE-1024x3-e20-G6-Dedup/final_pid_manifest.json \
+  --tokenizer models/Qwen3-0.6B-POI-Vocab-v1 \
+  --output-dir outputs/eval/qwen3_0.6b_main_v1_a100_e2/trie
+
+python scripts/evaluate_sft_retrieval.py \
+  --mode valid-checkpoints \
+  --valid-file data/sft/beijing_order_main_v1/valid.jsonl \
+  --checkpoints \
+    outputs/sft/qwen3_0.6b_main_v1_a100_e2/checkpoint-2290 \
+    outputs/sft/qwen3_0.6b_main_v1_a100_e2/checkpoint-4580 \
+    outputs/sft/qwen3_0.6b_main_v1_a100_e2/checkpoint-6870 \
+    outputs/sft/qwen3_0.6b_main_v1_a100_e2/checkpoint-9158 \
+  --tokenizer models/Qwen3-0.6B-POI-Vocab-v1 \
+  --trie-dir outputs/eval/qwen3_0.6b_main_v1_a100_e2/trie \
+  --num-beams 10 \
+  --top-k 10 \
+  --length-penalty 1.0 \
+  --per-device-eval-batch-size 128 \
+  --chunk-size 1000 \
+  --validation-subset-size 10000 \
+  --output-dir outputs/eval/qwen3_0.6b_main_v1_a100_e2
+~~~
+
+### 固定 10,000 条 Validation checkpoint 对比
+
+| Epoch | Checkpoint | Beam | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.5 | `checkpoint-2290` | 10 | 0.3444 | 0.5743 | 0.6472 | 0.7103 | 0.3444 | 0.4815 | 0.5116 | 0.5322 |
+| 1.0 | `checkpoint-4580` | 10 | 0.4119 | 0.6611 | 0.7368 | 0.7975 | 0.4119 | 0.5599 | 0.5912 | 0.6111 |
+| 1.5 | `checkpoint-6870` | 10 | 0.4457 | 0.6990 | 0.7750 | 0.8376 | 0.4457 | 0.5961 | 0.6274 | 0.6479 |
+| 2.0 | `checkpoint-9158` | 10 | 0.4577 | 0.7141 | 0.7878 | 0.8483 | 0.4577 | 0.6096 | 0.6402 | 0.6599 |
+
+### 2.0 epoch 分层诊断与性能
+
+| 诊断项 | 结果 |
+|---|---:|
+| 合法结构 / 合法 PID 比例 | 100% / 100% |
+| GID6 / SID3 / Base PID9 / Final PID Exact Match | 0.7069 / 0.4944 / 0.4853 / 0.4577 |
+| Singleton 样本数 / HR@1 / HR@10 / NDCG@10 | 7,072 / 0.4641 / 0.8231 / 0.6476 |
+| Dedup 样本数 / HR@1 / HR@10 / NDCG@10 | 2,928 / 0.4423 / 0.9092 / 0.6897 |
+| Base PID9 正确条件下 Dedup Token 准确率 | 0.8243（1,295 / 1,571） |
+| 返回候选数均值 / 重复候选比例 | 10.0 / 0% |
+| 吞吐 / 平均单样本耗时 | 13.73 samples/s / 72.81 ms |
+| 峰值显存 | 27.05 GiB |
+
+四组运行共耗时 2,918.39 秒，每组均由 10 个完整分片覆盖 10,000 条样本；中断恢复签名包含数据、checkpoint、Tokenizer、Trie、生成配置和评测代码哈希，配置变化不会复用旧进度。最佳 checkpoint 的五类错误 Case 各保留 100 条，仅存于 Git 忽略的评测产物中。
+
+### 产物、结论与下一步
+
+- 输出目录为 `outputs/eval/qwen3_0.6b_main_v1_a100_e2/`；保留全量 Final PID Trie、固定子集及 Manifest、Prompt 校验、四组分片进度、JSON/CSV 汇总和 500 条固定错误 Case。
+- `checkpoint-9158` 在该固定子集上的 NDCG@10、HR@1 和 HR@10 均为四组最高，且 0.5→2.0 epoch 的各项主指标单调提升；因此它是本轮固定子集口径下的排序最优 checkpoint。
+- 该结论不能替代完整 Validation，也未比较其他 Beam。当前没有生成 `selected_config.json`，没有读取或评测 2026-07-14 Test，不能将上述指标写成正式 Test 结果。
+- 下一步需由用户先核验本轮结果，再单独决定是否冻结 `checkpoint-9158 + Beam=10`、扩大 Validation、执行 Test 或训练 3 epoch；本任务不自动进入这些步骤。
+## EXP-20260729-01：BGE-M3 全量向量与无 Instruction 召回对照
+
+- 状态：已完成
+- 日期：2026-07-29
+- 全量编码时间：17:55:42—18:31:52（Asia/Shanghai）
+- 正式评测时间：18:47:57—18:56:26（Asia/Shanghai）
+- 阶段：POI Embedding 构建与相关性评测 E3
+- 目标：在不改变 POI 文本、固定评测数据和精确检索协议的条件下，评估 BGE-M3 是否优于现有 Qwen3-Embedding-0.6B/4B。
+- 假设：BGE-M3 的多语言语义表示可能改善中文地图 Query 与 POI 长文本的匹配，尤其是信息较少的短 Query。
+
+### 数据、模型与代码
+
+- POI 数据：`beijing_poi_clean_20260715_json`，共 16 个分片、2,337,178 条，输入指纹为 `d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071`
+- POI 输入：复用原数据的 `text` 字段，即现有名称、地址和别名拼接方式；本实验未改为名称、地址和类别
+- 评测数据：与 E1/E2 完全相同的 10,000 条北京检索订单，SHA256 为 `52b2bc62349dffaaf31444e03d012e75a22b5bedb4fea6327b8c7fe4f90282f2`
+- E1 对齐：10,000 个 `order_id`、目标 `poi_id` 和行顺序逐行一致，行映射 SHA256 为 `86a37f3c4c0f01f6000e7eb39a5c57f9bfef2d595124e3a33263fc4eb5923610`
+- 模型：`models/bge-m3/`，权重 `pytorch_model.bin` SHA256 为 `b5e0ce3470abf5ef3831aa1bd5553b486803e83251590ab7ff35a117cf6aad38`
+- Git：`cd64b41`，工作树包含本次 BGE 配置、评测兼容修改及其他既有未提交改动
+- 代码：`scripts/build_poi_embeddings.py`、`scripts/evaluate_embedding_retrieval.py`
+- 配置：`configs/embedding_bge_m3.yaml`、`configs/embedding_retrieval_eval.yaml`
+- 环境：Python 3.10.20、NumPy 1.26.4、PyTorch 2.9.1+cu128、Transformers 4.52.4、Sentence Transformers 5.1.2、Faiss GPU 1.8.0、NVIDIA RTX A6000
+
+### 全量 POI 编码
+
+正式配置：
+
+| 参数 | 取值 |
+|---|---|
+| Device | CUDA |
+| Batch / buffer | 64 / 8,192 |
+| Max sequence length | 512 |
+| Model dtype / output dtype | BF16 / float16 |
+| Attention | SDPA |
+| Padding / pooling | Right / CLS |
+| Embedding dimension | 1,024 |
+| Normalize embeddings | Yes |
+| Resume | Yes |
+
+运行命令：
+
+```bash
+python -u scripts/build_poi_embeddings.py \
+  --config configs/embedding_bge_m3.yaml
+```
+
+编码结果：
+
+| 指标 | 结果 |
+|---|---:|
+| 输入/ID/向量行数 | 2,337,178 |
+| 唯一 POI ID | 2,337,178 |
+| 向量 shape / dtype | `[2337178, 1024]` / float16 |
+| 数据扫描 / 模型加载 | 55.79 / 54.36 秒 |
+| 编码耗时 | 1,944.59 秒 |
+| 编码吞吐 | 1,201.89 条/秒 |
+| 峰值 allocated / reserved 显存 | 1.79 / 2.20 GiB |
+| `embeddings.npy` 大小 | 4,786,540,672 字节 |
+
+`manifest.json`、`progress.json` 和后台退出码均为成功状态。正式评测 Gate 0 对全部 2,337,178 条向量完成有限值检查，对全部 POI ID 完成唯一性和原始分片逐行对齐检查；2,048 条均匀抽样向量的 L2 范数为 0.998049/1.000531/1.003908（最小/均值/最大）。
+
+### 固定 10,000 条精确召回
+
+正式配置：
+
+| 参数 | 取值 |
+|---|---|
+| Query 输入 | 原始 `query`，无前缀或 Instruction |
+| Query batch / buffer | 64 / 1,024 |
+| Query max sequence length | 128 |
+| Model dtype / output dtype | BF16 / float16 |
+| Padding / pooling | Right / CLS |
+| Normalize embeddings | Yes |
+| Query shape | `[10000, 1024]` |
+| Faiss index | GPU `GpuIndexFlatIP`，float32 精确内积 |
+| POI add 分批 | 1,000,000 + 1,337,178 |
+| Query search batch / Top-K | 64 / 20 |
+
+运行命令：
+
+```bash
+python -u scripts/evaluate_embedding_retrieval.py \
+  --config configs/embedding_retrieval_eval.yaml \
+  --model bge_m3 \
+  --instruction none
+```
+
+整体指标：
+
+| 指标 | 0.6B | 4B | BGE-M3 | BGE-M3 - 0.6B |
+|---|---:|---:|---:|---:|
+| Hit@1 | 12.03% | 9.72% | 12.35% | +0.32 pp |
+| Hit@3 | 19.09% | 15.07% | 21.24% | +2.15 pp |
+| Hit@5 | 23.13% | 17.63% | 25.98% | +2.85 pp |
+| Hit@10 | 28.25% | 21.18% | 32.78% | +4.53 pp |
+| Hit@20 | 34.51% | 25.12% | 40.81% | +6.30 pp |
+| MRR@10 | 16.6907% | 13.0759% | 18.2485% | +1.5578 pp |
+
+BGE-M3 的 Query 长度分桶：
+
+| 字符数 | 样本数 | Hit@1 | Hit@5 | Hit@10 | MRR@10 |
+|---|---:|---:|---:|---:|---:|
+| 1—2 | 2,927 | 2.32% | 8.54% | 13.46% | 5.05% |
+| 3—5 | 4,552 | 9.20% | 23.51% | 31.66% | 15.48% |
+| 6—10 | 1,796 | 25.61% | 48.61% | 56.35% | 35.34% |
+| >10 | 725 | 39.72% | 55.86% | 59.45% | 46.59% |
+
+性能与显存：
+
+| 项目 | 结果 |
+|---|---:|
+| Gate 0 | 161.23 秒 |
+| 模型加载（内部 / wall time） | 96.45 / 235.72 秒 |
+| Query 编码 | 8.81 秒，1,135.27 条/秒 |
+| GPU 索引构建 | 48.82 秒 |
+| 10,000 条检索 | 8.78 秒 |
+| 总耗时 | 509.76 秒 |
+| Query 峰值 allocated / reserved | 1.15 / 1.23 GiB |
+| Faiss 观测显存增量峰值 | 10.43 GiB |
+
+产物：
+
+- POI 向量：`outputs/embeddings/beijing_poi_bge_m3/`
+- Query 向量：`outputs/evaluation/embedding_retrieval/query_embeddings/bge_m3_no_instruction.npy`
+- Query 行映射：`outputs/evaluation/embedding_retrieval/query_embeddings/bge_m3_no_instruction_rows.jsonl`
+- 召回结果：`outputs/evaluation/embedding_retrieval/bge_m3_no_instruction/`
+- Query 向量、行映射和召回结果 SHA256 分别为 `67406ffcf16225407087af8c14db1ea7919eaea791a8f667871803d9e9ed9ddd`、`86a37f3c4c0f01f6000e7eb39a5c57f9bfef2d595124e3a33263fc4eb5923610`、`e9b4a4df6ce3993bd8ea96a4f95c62daa9ca6ddae6432908427cf07ec019b397`
+
+独立核验通过：Query 向量 shape/dtype 为 `[10000, 1024]`/float16 且全部有限；Top-K 行号和分数 shape 均为 `[10000, 20]`，分数全部有限；从保存的目标排名重新计算六项整体指标，与 `metrics.json` 逐项一致。
+
+### 结论与下一步
+
+BGE-M3 在当前无 Instruction 口径下是三个模型中最优者，相对 0.6B 的优势随 K 增大而扩大，Hit@10 和 Hit@20 分别提升 4.53 和 6.30 个百分点；1—2 字 Query 的 Hit@10 从 5.06% 提升到 13.46%，短 Query 改善最明显。
+
+该对照保持了数据、POI 文本、Query 输入、归一化和 Faiss 精确检索一致，但使用各模型原生 pooling 和 padding：BGE-M3 为 CLS/Right，Qwen 为 last-token/Left。因此结果代表完整编码器方案差异，不应解释为仅由基础模型权重带来的差异。当前不自动替换既有 0.6B RQ-VAE/SID 输入；若决定切换，应先基于 BGE-M3 向量重跑 RQ-VAE/SID 对照，再决定是否重建 SFT 数据和模型。

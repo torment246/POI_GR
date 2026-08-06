@@ -26,5 +26,145 @@
       "assistant_tag": "assistant",
       "system_tag": "system"
     }
+  },
+  "tiger_bge_m3_1024x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/genpoi_bge_m3_geope_1024x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/genpoi_bge_m3_geope_1024x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_train": {
+    "file_name": "../../data/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_valid": {
+    "file_name": "../../data/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_history10_query_gid_v1_smoke_train": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_smoke/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_history10_query_gid_v1_smoke_valid": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_smoke/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
 }

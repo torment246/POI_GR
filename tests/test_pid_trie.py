@@ -18,6 +18,7 @@ from poi_gr.pid_trie import (  # noqa: E402
     CompactPidTrie,
     PidTokenIds,
     PidTrieError,
+    TriePrefilledPrefixConstraint,
     TriePrefixConstraint,
     build_compact_trie_arrays,
 )
@@ -122,6 +123,25 @@ class CompactPidTrieTest(unittest.TestCase):
             eos_token_id=self.tokens.eos,
         )
         self.assertEqual(constraint(0, np.asarray(prompt + path)), [99])
+
+    def test_prefilled_constraint_continues_from_each_gid_prefix(self) -> None:
+        prompt = [10, 20, 30]
+        first_prefix = self.path(0)[:3]
+        second_prefix = self.path(3)[:3]
+        constraint = TriePrefilledPrefixConstraint(
+            self.trie,
+            prompt_width=len(prompt) + len(first_prefix),
+            eos_token_id=self.tokens.eos,
+            prefilled_prefixes=(first_prefix, second_prefix),
+        )
+        self.assertEqual(
+            constraint(0, np.asarray(prompt + first_prefix)),
+            [self.path(0)[3]],
+        )
+        self.assertEqual(
+            constraint(1, np.asarray(prompt + second_prefix)),
+            [self.path(3)[3]],
+        )
 
 
 if __name__ == "__main__":

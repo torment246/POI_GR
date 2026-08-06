@@ -21,6 +21,7 @@ from poi_gr.generative_eval import (  # noqa: E402
     atomic_write_json,
     authorize_test_file,
     build_fixed_validation_subset,
+    build_reference_aligned_validation_subset,
     flatten_result_row,
     freeze_selected_config,
     load_lf_tokenizer_and_template,
@@ -53,6 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--selected-config", type=Path)
     parser.add_argument("--tokenizer", type=Path, required=True)
     parser.add_argument("--trie-dir", type=Path, required=True)
+    parser.add_argument(
+        "--ssp-predictions-dir",
+        type=Path,
+        help="GenPOI 邻近分类器对当前评测文件生成的完整 SSP predictions 目录。",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--num-beams", type=int, default=10)
     parser.add_argument("--top-k", type=int, default=10)
@@ -74,6 +80,28 @@ def parse_args() -> argparse.Namespace:
             "仅 valid-checkpoints 使用：按 sample_id 字典序固定抽取指定条数，"
             "保存子集 JSONL 和 manifest 后评测全部 checkpoint。"
         ),
+    )
+    parser.add_argument(
+        "--reference-validation-subset",
+        type=Path,
+        help=(
+            "仅 valid-checkpoints 使用：按参考 JSONL 的 order_id + searchid "
+            "精确对齐同一批 Validation 样本。"
+        ),
+    )
+    parser.add_argument(
+        "--expected-checkpoint-steps",
+        type=int,
+        nargs="+",
+        default=(2290, 4580, 6870, 9158),
+        help="依次对应 --checkpoints 的训练步数。",
+    )
+    parser.add_argument(
+        "--expected-checkpoint-epochs",
+        type=float,
+        nargs="+",
+        default=(0.5, 1.0, 1.5, 2.0),
+        help="依次对应 --checkpoints 的 epoch。",
     )
     parser.add_argument(
         "--smoke-limit",
@@ -209,6 +237,7 @@ def _checkpoint_eval(
     cutoff_len: int,
     smoke_limit: int | None,
     dataset_context: Mapping[str, Any] | None = None,
+    ssp_predictions_dir: Path | None = None,
 ) -> dict[str, Any]:
     result = run_full_evaluation(
         data_file=valid_file,
@@ -231,6 +260,7 @@ def _checkpoint_eval(
         cutoff_len=cutoff_len,
         smoke_limit=smoke_limit,
         dataset_context=dataset_context,
+        ssp_predictions_dir=ssp_predictions_dir,
     )
     _free_cuda()
     return result
@@ -242,6 +272,7 @@ def run_valid_checkpoints(args: argparse.Namespace) -> int:
     tokenizer = resolve(args.tokenizer)
     trie_dir = resolve(args.trie_dir)
     output_dir = resolve(args.output_dir)
+    ssp_predictions_dir = resolve(args.ssp_predictions_dir)
     assert valid_file and tokenizer and trie_dir and output_dir
     if args.valid_file is None or not checkpoints:
         raise GenerativeEvalError(
@@ -262,7 +293,39 @@ def run_valid_checkpoints(args: argparse.Namespace) -> int:
     evaluation_rows = source_valid_rows
     evaluation_hash = source_valid_hash
     dataset_context: dict[str, Any] | None = None
-    if args.validation_subset_size is not None:
+    reference_subset = resolve(args.reference_validation_subset)
+    if reference_subset is not None and args.validation_subset_size is not None:
+        raise GenerativeEvalError(
+            "--reference-validation-subset 与 --validation-subset-size 不能同时使用"
+        )
+    if reference_subset is not None:
+        subset = build_reference_aligned_validation_subset(
+            valid_file,
+            reference_subset,
+            output_dir,
+            source_rows=source_valid_rows,
+            source_sha256=source_valid_hash,
+        )
+        if subset.row_count != 10_000:
+            raise GenerativeEvalError("本轮参考 Validation 子集必须恰好为 10,000 条")
+        evaluation_file = subset.data_path
+        evaluation_rows = subset.row_count
+        evaluation_hash = subset.sha256
+        dataset_context = {
+            "scope": "reference_aligned_validation_subset",
+            "subset_size": subset.row_count,
+            "subset_manifest": str(subset.manifest_path),
+            "subset_manifest_sha256": sha256_file(subset.manifest_path),
+            "source_file": str(valid_file),
+            "source_rows": source_valid_rows,
+            "source_sha256": source_valid_hash,
+            "reference_file": str(reference_subset),
+            "reference_sha256": subset.manifest["reference_sha256"],
+            "business_keys_sha256": subset.manifest["business_keys_sha256"],
+            "selection_method": subset.manifest["selection_method"],
+            "output_order": subset.manifest["output_order"],
+        }
+    elif args.validation_subset_size is not None:
         if args.validation_subset_size != 10_000:
             raise GenerativeEvalError("本轮固定 Validation 子集大小必须为 10,000")
         subset = build_fixed_validation_subset(
@@ -287,7 +350,12 @@ def run_valid_checkpoints(args: argparse.Namespace) -> int:
             "output_order": subset.manifest["output_order"],
         }
     mapping, _ = _trie_inputs(trie_dir)
-    metadata = validate_checkpoints(checkpoints, tokenizer_path=tokenizer)
+    metadata = validate_checkpoints(
+        checkpoints,
+        tokenizer_path=tokenizer,
+        expected_steps=args.expected_checkpoint_steps,
+        expected_epochs=args.expected_checkpoint_epochs,
+    )
     _write_prompt_validation(
         valid_file=evaluation_file,
         tokenizer_path=tokenizer,
@@ -316,6 +384,7 @@ def run_valid_checkpoints(args: argparse.Namespace) -> int:
             cutoff_len=args.cutoff_len,
             smoke_limit=args.smoke_limit,
             dataset_context=dataset_context,
+            ssp_predictions_dir=ssp_predictions_dir,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
@@ -338,6 +407,7 @@ def run_valid_checkpoints(args: argparse.Namespace) -> int:
             cutoff_len=args.cutoff_len,
             smoke_limit=None,
             dataset_context=dataset_context,
+            ssp_predictions_dir=ssp_predictions_dir,
         )
         for item in metadata
     ]

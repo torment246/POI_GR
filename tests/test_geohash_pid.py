@@ -41,6 +41,7 @@ class GeohashPidTest(unittest.TestCase):
         *,
         coordinates: list[tuple[float, float]] | None = None,
         metadata_order: list[int] | None = None,
+        experiment_id: str = "BJ-RQVAE-1024x3",
     ) -> tuple[Path, Path]:
         sid_codes = np.asarray(
             [
@@ -77,7 +78,7 @@ class GeohashPidTest(unittest.TestCase):
             json.dumps(
                 {
                     "schema_version": "sid-input-v1",
-                    "experiment_id": "BJ-RQVAE-1024x3",
+                    "experiment_id": experiment_id,
                     "method": "vanilla_rqvae",
                     "checkpoint": {
                         "epoch": 20,
@@ -168,6 +169,20 @@ class GeohashPidTest(unittest.TestCase):
         self.assertEqual(resolution["residual_colliding_poi_count"], 2)
         self.assertEqual(resolution["residual_pid_bucket_count"], 1)
         self.assertEqual(resolution["maximum_residual_pid_bucket_size"], 2)
+
+    def test_accepts_compatible_sid_from_another_experiment(self) -> None:
+        manifest_path, poi_path = self.write_fixture(
+            experiment_id="GenPOI-BGE-M3-GeoPE-1024x3"
+        )
+        result = build_geohash_pid(
+            manifest_path,
+            poi_path,
+            self.root / "genpoi-output",
+        )
+        self.assertEqual(
+            result.manifest["sid_source"]["experiment_id"],
+            "GenPOI-BGE-M3-GeoPE-1024x3",
+        )
 
     def test_poi_id_and_sid_row_mapping_must_match(self) -> None:
         manifest_path, poi_path = self.write_fixture(metadata_order=[1, 0, 2, 3])

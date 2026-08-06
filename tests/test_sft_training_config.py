@@ -27,13 +27,156 @@ class SftTrainingConfigTest(unittest.TestCase):
         self.assertEqual(expected, actual)
         self.assertEqual(
             set(actual),
-            {"beijing_order_main_v1_train", "beijing_order_main_v1_valid"},
+            {
+                "beijing_order_main_v1_train",
+                "beijing_order_main_v1_valid",
+                "tiger_bge_m3_1024x3_history10_query_gid_v1_train",
+                "tiger_bge_m3_1024x3_history10_query_gid_v1_valid",
+                "tiger_bge_m3_1024x3_history10_query_gid_v1_smoke_train",
+                "tiger_bge_m3_1024x3_history10_query_gid_v1_smoke_valid",
+                "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1_train",
+                "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1_valid",
+                "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_train",
+                "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_valid",
+                "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_train",
+                "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_valid",
+            },
         )
         serialized = json.dumps(actual)
         self.assertNotIn("test.jsonl", serialized)
         for item in actual.values():
             self.assertEqual(item["formatting"], "sharegpt")
             self.assertEqual(item["columns"]["messages"], "messages")
+
+    def test_tiger_formal_training_protocol(self) -> None:
+        config = self.load_yaml(
+            "tiger_bge_m3_1024x3_history10_query_gid_v1.yaml"
+        )
+        self.assertEqual(config["model_name_or_path"], "models/Qwen3-0.6B-TIGER-Vocab-v1")
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertNotIn("save_steps", config)
+        self.assertNotIn("eval_steps", config)
+        global_batch = (
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"]
+            * 4
+        )
+        self.assertEqual(global_batch, 512)
+        serialized = json.dumps(config)
+        self.assertNotIn("test.jsonl", serialized)
+
+    def test_genpoi_single_gpu_formal_training_protocol(self) -> None:
+        config = self.load_yaml(
+            "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1.yaml"
+        )
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-GenPOI-Vocab-v1",
+        )
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertNotIn("save_steps", config)
+        self.assertNotIn("eval_steps", config)
+        global_batch = (
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"]
+        )
+        self.assertEqual(global_batch, 512)
+        serialized = json.dumps(config)
+        self.assertNotIn("test.jsonl", serialized)
+
+    def test_genpoi_smoke_uses_fixed_cache_and_twenty_steps(self) -> None:
+        config = self.load_yaml(
+            "genpoi_bge_m3_geope_1024x3_history10_query_gid_v1_smoke.yaml"
+        )
+        self.assertEqual(config["max_steps"], 20)
+        self.assertEqual(config["save_steps"], 10)
+        self.assertEqual(config["eval_steps"], 10)
+        self.assertTrue(config["tokenized_path"].endswith("/smoke"))
+        self.assertEqual(config["per_device_train_batch_size"], 1)
+        self.assertEqual(config["gradient_accumulation_steps"], 1)
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertFalse(config["train_on_prompt"])
+        self.assertEqual(config["report_to"], "none")
+        serialized = json.dumps(config)
+        self.assertNotIn("test.jsonl", serialized)
+
+    def test_centered_genpoi_formal_and_smoke_training_protocol(self) -> None:
+        stem = (
+            "genpoi_centered_geope32_tiger_rqvae_1024x3_"
+            "history10_query_gid_v2"
+        )
+        config = self.load_yaml(f"{stem}.yaml")
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-GenPOI-Vocab-v1",
+        )
+        self.assertEqual(config["dataset"], f"{stem}_train")
+        self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertTrue(config["packing"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+
+        smoke = self.load_yaml(f"{stem}_smoke.yaml")
+        self.assertEqual(smoke["max_steps"], 20)
+        self.assertTrue(smoke["tokenized_path"].endswith("/smoke"))
+        self.assertNotIn("test.jsonl", json.dumps(smoke))
+
+    def test_gnpr_formal_and_smoke_training_protocol(self) -> None:
+        config = self.load_yaml(
+            "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.yaml"
+        )
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-GNPR-Vocab-v1",
+        )
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertEqual(
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"],
+            512,
+        )
+        serialized = json.dumps(config)
+        self.assertNotIn("test.jsonl", serialized)
+        self.assertNotIn("passenger_id", serialized)
+
+        smoke = self.load_yaml(
+            "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_smoke.yaml"
+        )
+        self.assertEqual(smoke["max_steps"], 20)
+        self.assertEqual(smoke["save_steps"], 10)
+        self.assertEqual(smoke["eval_steps"], 10)
+        self.assertTrue(smoke["tokenized_path"].endswith("/smoke"))
+        self.assertEqual(smoke["cutoff_len"], 512)
+        self.assertFalse(smoke["train_on_prompt"])
+        self.assertEqual(smoke["report_to"], "none")
 
     def test_formal_training_protocol(self) -> None:
         config = self.load_yaml("qwen3_0.6b_main_v1.yaml")

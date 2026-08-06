@@ -209,10 +209,20 @@ def load_pid_token_ids(
     mapping_path = tokenizer_path / mapping_filename
     mapping = _load_json_object(mapping_path, "POI Token mapping")
     token_mapping = mapping.get("tokens")
-    if not isinstance(token_mapping, Mapping) or len(token_mapping) != 3620:
-        raise PidTrieError("poi_token_mapping.json 必须包含 3,620 个 Token")
+    if not isinstance(token_mapping, Mapping):
+        raise PidTrieError("poi_token_mapping.json 的 tokens 必须是 JSON object")
     if "<D_-1>" in token_mapping:
         raise PidTrieError("Token 表不得包含 <D_-1>")
+
+    required_pid_tokens = {
+        *(f"<G_{char}>" for char in GEOHASH_ALPHABET),
+        *(f"<S{level}_{code}>" for level in (1, 2, 3) for code in range(1024)),
+        *(f"<D_{code}>" for code in range(512)),
+    }
+    missing = required_pid_tokens.difference(token_mapping)
+    if missing:
+        example = sorted(missing)[0]
+        raise PidTrieError(f"poi_token_mapping.json 缺少 PID Token：{example}")
 
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
@@ -265,6 +275,8 @@ def load_pid_token_ids(
         "tokenizer_json_sha256": sha256_file(tokenizer_path / "tokenizer.json"),
         "mapping_path": str(mapping_path),
         "mapping_sha256": sha256_file(mapping_path),
+        "mapping_token_count": len(token_mapping),
+        "pid_token_count": len(required_pid_tokens),
         "vocab_size": len(tokenizer),
         "eos_token_id": int(tokenizer.eos_token_id),
     }
@@ -564,6 +576,49 @@ class TriePrefixConstraint:
         node_id = self.trie.traverse(generated)
         if node_id < 0:
             raise PidTrieError(f"生成序列离开 Final PID Trie：{generated}")
+        children = self.trie.children(node_id).astype(int).tolist()
+        if children:
+            return children
+        if self.trie.terminal_poi_row(node_id) >= 0:
+            return [self.eos_token_id]
+        raise PidTrieError(f"非 terminal Trie 节点没有合法子节点：{node_id}")
+
+
+class TriePrefilledPrefixConstraint:
+    """Trie callback whose per-example prefix is already present in model input."""
+
+    def __init__(
+        self,
+        trie: CompactPidTrie,
+        prompt_width: int,
+        eos_token_id: int,
+        prefilled_prefixes: Sequence[Sequence[int]],
+    ) -> None:
+        if prompt_width <= 0:
+            raise PidTrieError("prompt_width 必须为正整数")
+        if not prefilled_prefixes:
+            raise PidTrieError("prefilled_prefixes 不能为空")
+        self.trie = trie
+        self.prompt_width = prompt_width
+        self.eos_token_id = eos_token_id
+        self.prefilled_prefixes = tuple(
+            tuple(int(token_id) for token_id in prefix)
+            for prefix in prefilled_prefixes
+        )
+        for prefix in self.prefilled_prefixes:
+            if trie.traverse(prefix) < 0:
+                raise PidTrieError(f"预填 GID Prefix 不在 Final PID Trie：{prefix}")
+
+    def __call__(self, batch_id: int, input_ids: Any) -> list[int]:
+        if batch_id < 0 or batch_id >= len(self.prefilled_prefixes):
+            raise PidTrieError(f"batch_id 超出预填 Prefix 范围：{batch_id}")
+        generated = input_ids[self.prompt_width :]
+        if hasattr(generated, "tolist"):
+            generated = generated.tolist()
+        path = (*self.prefilled_prefixes[batch_id], *generated)
+        node_id = self.trie.traverse(path)
+        if node_id < 0:
+            raise PidTrieError(f"生成序列离开预填 Final PID Trie：{path}")
         children = self.trie.children(node_id).astype(int).tolist()
         if children:
             return children

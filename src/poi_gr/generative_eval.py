@@ -21,10 +21,17 @@ import numpy as np
 
 from .pid_trie import (
     CompactPidTrie,
+    GEOHASH_ALPHABET,
     PidTokenIds,
+    TriePrefilledPrefixConstraint,
     TriePrefixConstraint,
     load_pid_token_ids,
     sha256_file,
+)
+from .methods.genpoi_proximity import (
+    GenPoiProximityError,
+    effective_prefix_length,
+    extract_current_query_and_gid,
 )
 
 
@@ -37,8 +44,6 @@ ERROR_TYPES = (
     "target_in_top10_not_top1",
     "top10_miss",
 )
-QUERY_PATTERN = re.compile(r"<QUERY>(.*?)</QUERY>", re.DOTALL)
-USER_GID_PATTERN = re.compile(r"<USER_GID>(.*?)</USER_GID>", re.DOTALL)
 PID_TOKEN_PATTERN = re.compile(r"<(?:G_[0-9bcdefghjkmnpqrstuvwxyz]|S[123]_\d+|D_\d+)>")
 
 
@@ -72,6 +77,7 @@ class PromptExample:
     prompt_ids: tuple[int, ...]
     target_poi_id: str
     requires_dedup: bool
+    target_present_in_causal_history: bool
     split: str
 
 
@@ -82,6 +88,13 @@ class FixedValidationSubset:
     row_count: int
     sha256: str
     manifest: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SspPrediction:
+    user_gid: tuple[str, ...]
+    predicted_lambda: int
+    prefill_length: int
 
 
 def canonical_sha256(value: Mapping[str, Any]) -> str:
@@ -571,12 +584,11 @@ def classify_error_types(
 
 
 def parse_user_fields(user_content: str) -> tuple[str, str]:
-    query = QUERY_PATTERN.search(user_content)
-    user_gid = USER_GID_PATTERN.search(user_content)
-    return (
-        query.group(1) if query else "",
-        user_gid.group(1) if user_gid else "",
-    )
+    try:
+        query, user_gid = extract_current_query_and_gid(user_content)
+    except GenPoiProximityError:
+        return "", ""
+    return query, "".join(f"<G_{value}>" for value in user_gid)
 
 
 def load_lf_tokenizer_and_template(
@@ -650,6 +662,34 @@ def encode_prompt_like_training(
     return source_ids[:source_len], target_pid_ids
 
 
+def target_pid_is_confined_to_causal_history(
+    user_content: str,
+    target_content: str,
+) -> bool:
+    """Return whether a repeated target PID occurs only in history POI fields."""
+
+    if (
+        user_content.count("<HISTORY>") != 1
+        or user_content.count("</HISTORY>") != 1
+        or user_content.count("<CURRENT>") != 1
+        or user_content.count("</CURRENT>") != 1
+    ):
+        return False
+    history_open, remainder = user_content.split("<HISTORY>", maxsplit=1)
+    history_content, current_content = remainder.split("</HISTORY>", maxsplit=1)
+    if history_open.strip() or target_content in current_content:
+        return False
+    pid_fields = re.findall(r"<POI_PID>(.*?)</POI_PID>", history_content)
+    if not any(target_content in value for value in pid_fields):
+        return False
+    history_without_pid_fields = re.sub(
+        r"<POI_PID>.*?</POI_PID>",
+        "",
+        history_content,
+    )
+    return target_content not in history_without_pid_fields
+
+
 def validate_and_encode_record(
     record: Mapping[str, Any],
     *,
@@ -697,8 +737,16 @@ def validate_and_encode_record(
         or "".join(parsed_tokens) != target_content
     ):
         raise GenerativeEvalError("Assistant content 不是纯 Final PID Token 序列")
-    if target_content in tokenizer.decode(prompt_ids, skip_special_tokens=False):
-        raise GenerativeEvalError("评测 Prompt 泄露目标 Final PID")
+    decoded_prompt = tokenizer.decode(prompt_ids, skip_special_tokens=False)
+    target_present_in_prompt = target_content in decoded_prompt
+    target_present_in_causal_history = False
+    if target_present_in_prompt:
+        target_present_in_causal_history = target_pid_is_confined_to_causal_history(
+            user_content,
+            target_content,
+        )
+        if not target_present_in_causal_history:
+            raise GenerativeEvalError("评测 Prompt 泄露目标 Final PID")
     sample_id = record.get("sample_id")
     target_poi_id = record.get("target_poi_id")
     if not isinstance(sample_id, str) or not sample_id:
@@ -713,6 +761,7 @@ def validate_and_encode_record(
         prompt_ids=tuple(int(value) for value in prompt_ids),
         target_poi_id=target_poi_id,
         requires_dedup=requires_dedup,
+        target_present_in_causal_history=target_present_in_causal_history,
         split=expected_split,
     )
 
@@ -761,7 +810,10 @@ def validate_prompt_template(
                 "prompt_ids_sha256": hashlib.sha256(
                     np.asarray(example.prompt_ids, dtype=np.int32).tobytes()
                 ).hexdigest(),
-                "target_absent": True,
+                "target_absent": not example.target_present_in_causal_history,
+                "target_present_only_in_causal_history": (
+                    example.target_present_in_causal_history
+                ),
                 "assistant_generation_prompt_correct": True,
                 "thinking_disabled": True,
             }
@@ -967,6 +1019,250 @@ def build_fixed_validation_subset(
     )
 
 
+def build_reference_aligned_validation_subset(
+    valid_file: Path,
+    reference_subset: Path,
+    output_dir: Path,
+    *,
+    source_rows: int,
+    source_sha256: str,
+) -> FixedValidationSubset:
+    """Align a method-specific Validation file to a frozen business-key subset."""
+
+    valid_file = valid_file.resolve()
+    reference_subset = reference_subset.resolve()
+    output_dir = output_dir.resolve()
+    if not reference_subset.is_file():
+        raise GenerativeEvalError(f"参考 Validation 子集不存在：{reference_subset}")
+    reference_sha256 = sha256_file(reference_subset)
+
+    def identity(record: Mapping[str, Any], source: str) -> tuple[str, str]:
+        values: list[str] = []
+        for field in ("order_id", "searchid"):
+            value = record.get(field)
+            if value is None or not str(value).strip():
+                raise GenerativeEvalError(f"{source} 缺少有效 {field}")
+            values.append(str(value))
+        return values[0], values[1]
+
+    reference_keys: list[tuple[str, str]] = []
+    reference_targets: dict[tuple[str, str], str] = {}
+    with reference_subset.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise GenerativeEvalError(
+                    f"参考 Validation 第 {line_number} 行 JSON 非法"
+                ) from error
+            if not isinstance(record, Mapping):
+                raise GenerativeEvalError("参考 Validation 每行必须是 object")
+            key = identity(record, f"参考 Validation 第 {line_number} 行")
+            if key in reference_targets:
+                raise GenerativeEvalError(f"参考 Validation 业务主键重复：{key}")
+            target = record.get("target_poi_id")
+            if target is None or not str(target).strip():
+                raise GenerativeEvalError(
+                    f"参考 Validation 第 {line_number} 行缺少 target_poi_id"
+                )
+            reference_keys.append(key)
+            reference_targets[key] = str(target)
+    if not reference_keys:
+        raise GenerativeEvalError("参考 Validation 子集不能为空")
+
+    subset_size = len(reference_keys)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data_path = output_dir / f"validation_subset_{subset_size}.jsonl"
+    manifest_path = output_dir / f"validation_subset_{subset_size}_manifest.json"
+    expected_manifest = {
+        "schema_version": "reference-aligned-validation-subset-v1",
+        "status": "completed",
+        "source_file": str(valid_file),
+        "source_rows": source_rows,
+        "source_sha256": source_sha256,
+        "reference_file": str(reference_subset),
+        "reference_rows": subset_size,
+        "reference_sha256": reference_sha256,
+        "subset_size": subset_size,
+        "selection_method": "exact_order_id_searchid_match",
+        "output_order": "reference_row_ascending",
+    }
+    if data_path.exists() or manifest_path.exists():
+        if not data_path.is_file() or not manifest_path.is_file():
+            raise GenerativeEvalError("Validation 子集文件与 manifest 必须同时存在")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise GenerativeEvalError(
+                "Validation 子集 manifest JSON 解析失败"
+            ) from error
+        if any(manifest.get(key) != value for key, value in expected_manifest.items()):
+            raise GenerativeEvalError("已有 Validation 子集 manifest 与当前输入不一致")
+        output_sha256 = sha256_file(data_path)
+        if manifest.get("output_sha256") != output_sha256:
+            raise GenerativeEvalError("已有 Validation 子集 SHA256 与 manifest 不一致")
+        with data_path.open("rb") as handle:
+            actual_rows = sum(1 for _ in handle)
+        if actual_rows != subset_size or manifest.get("output_rows") != subset_size:
+            raise GenerativeEvalError("已有 Validation 子集行数与 manifest 不一致")
+        return FixedValidationSubset(
+            data_path=data_path,
+            manifest_path=manifest_path,
+            row_count=subset_size,
+            sha256=output_sha256,
+            manifest=manifest,
+        )
+
+    matched_lines: dict[tuple[str, str], bytes] = {}
+    actual_source_rows = 0
+    with valid_file.open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            actual_source_rows += 1
+            try:
+                record = json.loads(raw_line)
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise GenerativeEvalError(
+                    f"Validation 第 {line_number} 行 JSON 非法"
+                ) from error
+            if not isinstance(record, Mapping):
+                raise GenerativeEvalError("Validation 每行必须是 object")
+            key = identity(record, f"Validation 第 {line_number} 行")
+            if key not in reference_targets:
+                continue
+            if key in matched_lines:
+                raise GenerativeEvalError(f"Validation 业务主键重复：{key}")
+            target = record.get("target_poi_id")
+            if str(target) != reference_targets[key]:
+                raise GenerativeEvalError(f"同一业务主键的目标 POI 不一致：{key}")
+            matched_lines[key] = raw_line
+    if actual_source_rows != source_rows:
+        raise GenerativeEvalError(
+            f"Validation 实际行数 {actual_source_rows:,} 与 manifest {source_rows:,} 不一致"
+        )
+    missing = [key for key in reference_keys if key not in matched_lines]
+    if missing:
+        raise GenerativeEvalError(
+            f"Validation 缺少 {len(missing):,} 条参考样本，例如：{missing[0]}"
+        )
+
+    temporary = data_path.with_name(f".{data_path.name}.tmp")
+    digest = hashlib.sha256()
+    with temporary.open("wb") as destination:
+        for key in reference_keys:
+            raw_line = matched_lines[key]
+            destination.write(raw_line)
+            digest.update(raw_line)
+        destination.flush()
+        os.fsync(destination.fileno())
+    os.replace(temporary, data_path)
+    key_bytes = "".join(
+        f"{order_id}\t{searchid}\n" for order_id, searchid in reference_keys
+    ).encode("utf-8")
+    manifest = {
+        **expected_manifest,
+        "built_at": datetime.now(timezone.utc).isoformat(),
+        "split": "valid",
+        "date": "2026-07-13",
+        "business_keys_sha256": hashlib.sha256(key_bytes).hexdigest(),
+        "target_poi_mismatch_count": 0,
+        "output_file": str(data_path),
+        "output_rows": subset_size,
+        "output_sha256": digest.hexdigest(),
+    }
+    atomic_write_json(manifest_path, manifest)
+    return FixedValidationSubset(
+        data_path=data_path,
+        manifest_path=manifest_path,
+        row_count=subset_size,
+        sha256=digest.hexdigest(),
+        manifest=manifest,
+    )
+
+
+def load_ssp_predictions(
+    predictions_dir: Path,
+    *,
+    evaluation_data_sha256: str,
+    expected_rows: int,
+) -> tuple[dict[str, SspPrediction], dict[str, Any]]:
+    """Validate and load target-free SSP predictions for one evaluation file."""
+
+    import pyarrow.parquet as pq
+
+    predictions_dir = predictions_dir.resolve()
+    manifest_path = predictions_dir / "manifest.json"
+    predictions_path = predictions_dir / "predictions.parquet"
+    if not manifest_path.is_file() or not predictions_path.is_file():
+        raise GenerativeEvalError("SSP predictions 目录缺少 manifest 或 Parquet")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise GenerativeEvalError("SSP predictions manifest JSON 非法") from error
+    schema_version = manifest.get("schema_version")
+    if schema_version not in {
+        "genpoi-proximity-predictions-v1",
+        "genpoi-beijing-ssp-predictions-v1",
+    }:
+        raise GenerativeEvalError("SSP predictions schema_version 不兼容")
+    expected_manifest = {
+        "status": "completed",
+        "rows": expected_rows,
+        "limit": None,
+        "source_validation_jsonl_sha256": evaluation_data_sha256,
+        "target_fields_used": [],
+    }
+    if any(manifest.get(key) != value for key, value in expected_manifest.items()):
+        raise GenerativeEvalError("SSP predictions 与当前正式评测数据不一致")
+    if Path(manifest.get("output_file", "")).resolve() != predictions_path:
+        raise GenerativeEvalError("SSP predictions 输出路径与 manifest 不一致")
+    if sha256_file(predictions_path) != manifest.get("output_sha256"):
+        raise GenerativeEvalError("SSP predictions Parquet SHA256 不一致")
+    table = pq.read_table(
+        predictions_path,
+        columns=["sample_id", "user_gid", "predicted_lambda", "prefill_length"],
+    )
+    if table.num_rows != expected_rows:
+        raise GenerativeEvalError("SSP predictions Parquet 行数不一致")
+    values: dict[str, SspPrediction] = {}
+    for sample_id, user_gid, predicted_lambda, prefill_length in zip(
+        table["sample_id"].to_pylist(),
+        table["user_gid"].to_pylist(),
+        table["predicted_lambda"].to_pylist(),
+        table["prefill_length"].to_pylist(),
+    ):
+        if not isinstance(sample_id, str) or not sample_id:
+            raise GenerativeEvalError("SSP prediction sample_id 非法")
+        if sample_id in values:
+            raise GenerativeEvalError(f"SSP prediction sample_id 重复：{sample_id}")
+        if not isinstance(user_gid, str) or len(user_gid) != 6:
+            raise GenerativeEvalError(f"SSP prediction user_gid 非法：{sample_id}")
+        level = int(predicted_lambda)
+        prefix = int(prefill_length)
+        if schema_version == "genpoi-proximity-predictions-v1":
+            if manifest.get("gamma") != 2:
+                raise GenerativeEvalError("论文原版 SSP predictions gamma 必须为 2")
+            if prefix != effective_prefix_length(level, gamma=2):
+                raise GenerativeEvalError(f"SSP prediction 前缀长度非法：{sample_id}")
+        else:
+            expected_beijing_contract = {
+                "selection_strategy": "direct_ordinal_safe_prefix",
+                "useful_prefix_depths": [3, 4, 5, 6],
+            }
+            if any(
+                manifest.get(key) != value
+                for key, value in expected_beijing_contract.items()
+            ):
+                raise GenerativeEvalError("北京 SSP predictions 安全前缀契约不一致")
+            if prefix not in {0, 3, 4, 5, 6} or level != prefix:
+                raise GenerativeEvalError(f"北京 SSP prediction 前缀长度非法：{sample_id}")
+        values[sample_id] = SspPrediction(
+            user_gid=tuple(user_gid),
+            predicted_lambda=level,
+            prefill_length=prefix,
+        )
+    return values, manifest
+
+
 def authorize_test_file(
     selected_config_path: Path,
     test_file: Path,
@@ -991,16 +1287,23 @@ def validate_checkpoints(
     *,
     tokenizer_path: Path,
     expected_steps: Sequence[int] = (2290, 4580, 6870, 9158),
+    expected_epochs: Sequence[float] = (0.5, 1.0, 1.5, 2.0),
+    expected_vocab_size: int | None = None,
 ) -> list[dict[str, Any]]:
-    if len(checkpoints) != len(expected_steps):
-        raise GenerativeEvalError("必须提供四个正式 checkpoint")
-    mapping = json.loads(
+    if not checkpoints or len(checkpoints) != len(expected_steps):
+        raise GenerativeEvalError("Checkpoint 数量必须与 expected_steps 一致且非空")
+    if len(expected_epochs) != len(expected_steps):
+        raise GenerativeEvalError("expected_epochs 数量必须与 expected_steps 一致")
+    mapping_payload = json.loads(
         (tokenizer_path / "poi_token_mapping.json").read_text(encoding="utf-8")
-    )["tokens"]
+    )
+    mapping = mapping_payload["tokens"]
+    vocab_size = expected_vocab_size or mapping_payload.get("new_vocab_size")
+    if not isinstance(vocab_size, int) or vocab_size <= 0:
+        raise GenerativeEvalError("无法从 Token mapping 确定预期 vocab_size")
     result: list[dict[str, Any]] = []
-    for index, (checkpoint, expected_step) in enumerate(
-        zip(checkpoints, expected_steps),
-        start=1,
+    for checkpoint, expected_step, expected_epoch in zip(
+        checkpoints, expected_steps, expected_epochs
     ):
         checkpoint = checkpoint.resolve()
         if checkpoint.name != f"checkpoint-{expected_step}":
@@ -1018,7 +1321,6 @@ def validate_checkpoints(
         state = json.loads(
             (checkpoint / "trainer_state.json").read_text(encoding="utf-8")
         )
-        expected_epoch = index * 0.5
         actual_epoch = float(state.get("epoch", -1))
         if abs(actual_epoch - expected_epoch) > 0.001:
             raise GenerativeEvalError(
@@ -1031,7 +1333,7 @@ def validate_checkpoints(
             if added.get(token) != token_id:
                 raise GenerativeEvalError(f"{checkpoint.name} Token ID 不一致：{token}")
         config = json.loads((checkpoint / "config.json").read_text(encoding="utf-8"))
-        if config.get("vocab_size") != 155_289:
+        if config.get("vocab_size") != vocab_size:
             raise GenerativeEvalError(f"{checkpoint.name} vocab_size 不一致")
         eval_loss = None
         for item in state.get("log_history", []):
@@ -1059,13 +1361,13 @@ def validate_checkpoints(
         )
     tokenizer_hashes = {item["tokenizer_json_sha256"] for item in result}
     if len(tokenizer_hashes) != 1:
-        raise GenerativeEvalError("四个 checkpoint 的 tokenizer 不一致")
+        raise GenerativeEvalError("各 checkpoint 的 tokenizer 不一致")
     return result
 
 
 def select_best_checkpoint(results: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
-    if len(results) != 4:
-        raise GenerativeEvalError("Checkpoint 选择必须基于四个完整 Validation 结果")
+    if not results:
+        raise GenerativeEvalError("Checkpoint 选择至少需要一个完整 Validation 结果")
     if any(item.get("status") != "completed" for item in results):
         raise GenerativeEvalError("存在未完成的 Checkpoint Validation 结果")
 
@@ -1462,6 +1764,7 @@ def evaluate_records_chunk(
     cutoff_len: int,
     batch_size: int,
     existing_error_counts: Mapping[str, int],
+    ssp_predictions: Mapping[str, SspPrediction] | None = None,
 ) -> tuple[
     RetrievalMetricsAccumulator,
     dict[str, list[dict[str, Any]]],
@@ -1499,80 +1802,137 @@ def evaluate_records_chunk(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats(model.device)
 
-    for start in range(0, len(examples), batch_size):
-        batch_examples = examples[start : start + batch_size]
-        input_ids, attention_mask = _pad_prompt_batch(
-            [example.prompt_ids for example in batch_examples],
-            pad_token_id=tokenizer.pad_token_id,
-            device=model.device,
-        )
-        prompt_width = int(input_ids.shape[1])
-        constraint = TriePrefixConstraint(
-            trie,
-            prompt_width,
-            tokenizer.eos_token_id,
-        )
-        generation_kwargs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "do_sample": False,
-            "num_beams": num_beams,
-            "num_return_sequences": num_return_sequences,
-            "max_new_tokens": 11,
-            "length_penalty": 1.0,
-            "early_stopping": True if num_beams > 1 else False,
-            "renormalize_logits": True,
-            "return_dict_in_generate": True,
-            "output_scores": True,
-            "prefix_allowed_tokens_fn": constraint,
-            "pad_token_id": tokenizer.pad_token_id,
-            "eos_token_id": tokenizer.eos_token_id,
-        }
-        with torch.inference_mode():
-            generated = model.generate(**generation_kwargs)
-        sequences = generated.sequences[:, prompt_width:].detach().cpu().tolist()
-        if getattr(generated, "sequences_scores", None) is None:
-            scores = [0.0] * len(sequences)
-        else:
-            scores = generated.sequences_scores.float().detach().cpu().tolist()
-        expected_sequences = len(batch_examples) * num_return_sequences
-        if len(sequences) != expected_sequences:
-            raise GenerativeEvalError("generate 返回的候选数量不符合配置")
-
-        for index, example in enumerate(batch_examples):
-            begin = index * num_return_sequences
-            end = begin + num_return_sequences
-            candidate_batch = rank_and_deduplicate_candidates(
-                sequences[begin:end],
-                scores[begin:end],
-                trie=trie,
-                token_ids=token_ids,
-                top_k=top_k,
-            )
-            accumulator.update(example.target_pid_tokens, candidate_batch)
-            generated_token_count += sum(candidate_batch.generated_lengths)
-            for error_type in classify_error_types(
-                example.target_pid_tokens,
-                candidate_batch.candidates,
-            ):
-                if (
-                    existing_error_counts.get(error_type, 0)
-                    + len(error_cases[error_type])
-                    >= 100
-                ):
-                    continue
-                error_cases[error_type].append(
-                    _build_error_case(
-                        error_type=error_type,
-                        example=example,
-                        candidates=candidate_batch.candidates,
-                        poi_ids=poi_ids,
-                        tokenizer=tokenizer,
-                        checkpoint_name=checkpoint_name,
-                        beam_size=num_beams,
-                    )
+    prepared: list[tuple[PromptExample, tuple[int, ...]]] = []
+    for example in examples:
+        prefix: tuple[int, ...] = ()
+        if ssp_predictions is not None:
+            prediction = ssp_predictions.get(example.sample_id)
+            if prediction is None:
+                raise GenerativeEvalError(
+                    f"SSP predictions 缺少样本：{example.sample_id}"
                 )
-        del generated, input_ids, attention_mask
+            try:
+                _, current_gid = extract_current_query_and_gid(example.user_content)
+            except GenPoiProximityError as error:
+                raise GenerativeEvalError(
+                    f"无法解析 CURRENT 地理信息：{example.sample_id}"
+                ) from error
+            if current_gid != prediction.user_gid:
+                raise GenerativeEvalError(
+                    f"SSP prediction user_gid 与评测样本不一致：{example.sample_id}"
+                )
+            prefix = tuple(
+                int(token_ids.gid[GEOHASH_ALPHABET.index(value)])
+                for value in current_gid[: prediction.prefill_length]
+            )
+            if trie.traverse(prefix) < 0:
+                raise GenerativeEvalError(
+                    f"SSP 预填 GID Prefix 不在 POI Trie：{example.sample_id}"
+                )
+        prepared.append((example, prefix))
+
+    groups: dict[int, list[tuple[PromptExample, tuple[int, ...]]]] = {}
+    for item in prepared:
+        groups.setdefault(len(item[1]), []).append(item)
+
+    for prefix_length in sorted(groups):
+        group = groups[prefix_length]
+        for start in range(0, len(group), batch_size):
+            batch = group[start : start + batch_size]
+            batch_examples = [item[0] for item in batch]
+            prefilled_prefixes = [item[1] for item in batch]
+            model_inputs = [
+                (*example.prompt_ids, *prefix)
+                for example, prefix in batch
+            ]
+            input_ids, attention_mask = _pad_prompt_batch(
+                model_inputs,
+                pad_token_id=tokenizer.pad_token_id,
+                device=model.device,
+            )
+            prompt_width = int(input_ids.shape[1])
+            if ssp_predictions is None:
+                constraint: Any = TriePrefixConstraint(
+                    trie,
+                    prompt_width,
+                    tokenizer.eos_token_id,
+                )
+            else:
+                constraint = TriePrefilledPrefixConstraint(
+                    trie,
+                    prompt_width,
+                    tokenizer.eos_token_id,
+                    prefilled_prefixes,
+                )
+            generation_kwargs = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "do_sample": False,
+                "num_beams": num_beams,
+                "num_return_sequences": num_return_sequences,
+                "max_new_tokens": 11 - prefix_length,
+                "length_penalty": 1.0,
+                "early_stopping": True if num_beams > 1 else False,
+                "renormalize_logits": True,
+                "return_dict_in_generate": True,
+                "output_scores": True,
+                "prefix_allowed_tokens_fn": constraint,
+                "pad_token_id": tokenizer.pad_token_id,
+                "eos_token_id": tokenizer.eos_token_id,
+            }
+            with torch.inference_mode():
+                generated = model.generate(**generation_kwargs)
+            remaining_sequences = (
+                generated.sequences[:, prompt_width:].detach().cpu().tolist()
+            )
+            sequences = [
+                [*prefilled_prefixes[index // num_return_sequences], *sequence]
+                for index, sequence in enumerate(remaining_sequences)
+            ]
+            if getattr(generated, "sequences_scores", None) is None:
+                scores = [0.0] * len(sequences)
+            else:
+                scores = generated.sequences_scores.float().detach().cpu().tolist()
+            expected_sequences = len(batch_examples) * num_return_sequences
+            if len(sequences) != expected_sequences:
+                raise GenerativeEvalError("generate 返回的候选数量不符合配置")
+
+            for index, example in enumerate(batch_examples):
+                begin = index * num_return_sequences
+                end = begin + num_return_sequences
+                candidate_batch = rank_and_deduplicate_candidates(
+                    sequences[begin:end],
+                    scores[begin:end],
+                    trie=trie,
+                    token_ids=token_ids,
+                    top_k=top_k,
+                )
+                accumulator.update(example.target_pid_tokens, candidate_batch)
+                generated_token_count += sum(candidate_batch.generated_lengths) - (
+                    prefix_length * len(candidate_batch.generated_lengths)
+                )
+                for error_type in classify_error_types(
+                    example.target_pid_tokens,
+                    candidate_batch.candidates,
+                ):
+                    if (
+                        existing_error_counts.get(error_type, 0)
+                        + len(error_cases[error_type])
+                        >= 100
+                    ):
+                        continue
+                    error_cases[error_type].append(
+                        _build_error_case(
+                            error_type=error_type,
+                            example=example,
+                            candidates=candidate_batch.candidates,
+                            poi_ids=poi_ids,
+                            tokenizer=tokenizer,
+                            checkpoint_name=checkpoint_name,
+                            beam_size=num_beams,
+                        )
+                    )
+            del generated, input_ids, attention_mask
 
     elapsed = time.monotonic() - started
     peak_memory = (
@@ -1589,7 +1949,7 @@ def evaluate_records_chunk(
     )
 
 
-def load_generation_model(checkpoint: Path) -> Any:
+def load_generation_model(checkpoint: Path, *, expected_vocab_size: int) -> Any:
     """Load one full-finetuned checkpoint on a single CUDA device."""
 
     import torch
@@ -1606,8 +1966,11 @@ def load_generation_model(checkpoint: Path) -> Any:
     )
     model.to(torch.device("cuda:0"))
     model.eval()
-    if model.config.vocab_size != 155_289:
-        raise GenerativeEvalError("Checkpoint 模型词表大小不是 155,289")
+    if model.config.vocab_size != expected_vocab_size:
+        raise GenerativeEvalError(
+            "Checkpoint 模型词表大小与评测 tokenizer 不一致："
+            f"{model.config.vocab_size} != {expected_vocab_size}"
+        )
     model.generation_config.temperature = None
     model.generation_config.top_p = None
     model.generation_config.top_k = None
@@ -1636,6 +1999,7 @@ def run_full_evaluation(
     cutoff_len: int = 128,
     smoke_limit: int | None = None,
     dataset_context: Mapping[str, Any] | None = None,
+    ssp_predictions_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run or resume one signature-bound checkpoint/beam evaluation."""
 
@@ -1649,6 +2013,14 @@ def run_full_evaluation(
     if not trie_manifest_path.is_file():
         raise GenerativeEvalError(f"Trie manifest 不存在：{trie_manifest_path}")
     trie_manifest = json.loads(trie_manifest_path.read_text(encoding="utf-8"))
+    ssp_predictions: dict[str, SspPrediction] | None = None
+    ssp_manifest: dict[str, Any] | None = None
+    if ssp_predictions_dir is not None:
+        ssp_predictions, ssp_manifest = load_ssp_predictions(
+            ssp_predictions_dir,
+            evaluation_data_sha256=data_sha256,
+            expected_rows=expected_rows,
+        )
     tokenizer_json = tokenizer_path.resolve() / "tokenizer.json"
     config = {
         "schema_version": EVALUATION_SCHEMA_VERSION,
@@ -1688,12 +2060,34 @@ def run_full_evaluation(
         "initial_batch_size": initial_batch_size,
         "smoke_limit": smoke_limit,
         "dataset_context": dict(dataset_context or {}),
+        "constraint_mode": (
+            "tcg_only"
+            if ssp_manifest is None
+            else (
+                "tcg_ssp_beijing_ordinal"
+                if ssp_manifest.get("schema_version")
+                == "genpoi-beijing-ssp-predictions-v1"
+                else "tcg_ssp"
+            )
+        ),
+        "ssp_gamma": ssp_manifest.get("gamma") if ssp_manifest else None,
+        "ssp_predictions_dir": (
+            str(ssp_predictions_dir.resolve()) if ssp_predictions_dir else None
+        ),
+        "ssp_predictions_manifest_sha256": (
+            sha256_file(ssp_predictions_dir.resolve() / "manifest.json")
+            if ssp_predictions_dir
+            else None
+        ),
+        "ssp_head_sha256": ssp_manifest.get("head_sha256") if ssp_manifest else None,
     }
     run_name = f"{split}_{checkpoint_name}_beam{num_beams}_return{num_return_sequences}"
     if smoke_limit is not None:
         run_name += f"_smoke{smoke_limit}"
     elif dataset_context and dataset_context.get("subset_size"):
         run_name += f"_subset{int(dataset_context['subset_size'])}"
+    if ssp_manifest is not None:
+        run_name += "_ssp"
     store = RunProgressStore(
         output_root / "runs" / run_name,
         config=config,
@@ -1715,7 +2109,7 @@ def run_full_evaluation(
         tokenizer_path,
         project_root=project_root,
     )
-    model = load_generation_model(checkpoint)
+    model = load_generation_model(checkpoint, expected_vocab_size=len(tokenizer))
     allowed_batch_sizes = [
         value for value in (128, 64, 32, 16) if value <= initial_batch_size
     ]
@@ -1765,6 +2159,7 @@ def run_full_evaluation(
                     cutoff_len=cutoff_len,
                     batch_size=batch_size,
                     existing_error_counts=existing_counts,
+                    ssp_predictions=ssp_predictions,
                 )
                 break
             except RuntimeError as error:

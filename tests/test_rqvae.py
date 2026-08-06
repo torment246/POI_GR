@@ -17,9 +17,10 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from poi_gr.rqvae import RQVAE
+from poi_gr.rqvae import RQVAE, hard_utilization_loss
 from poi_gr.rqvae_training import (
     build_model,
+    config_payload,
     export_checkpoint_sid,
     initialize_codebooks_kmeans,
     load_training_config,
@@ -77,6 +78,229 @@ class RQVAETest(unittest.TestCase):
             smaller.decoder.parameters(), larger.decoder.parameters(), strict=True
         ):
             self.assertTrue(torch.equal(left, right))
+
+    def test_multi_hidden_layer_encoder_decoder(self) -> None:
+        model = RQVAE(8, [7, 6, 5], 4, [3, 4, 5])
+        encoder_shapes = [
+            (module.in_features, module.out_features)
+            for module in model.encoder
+            if isinstance(module, torch.nn.Linear)
+        ]
+        decoder_shapes = [
+            (module.in_features, module.out_features)
+            for module in model.decoder
+            if isinstance(module, torch.nn.Linear)
+        ]
+        self.assertEqual(encoder_shapes, [(8, 7), (7, 6), (6, 5), (5, 4)])
+        self.assertEqual(decoder_shapes, [(4, 5), (5, 6), (6, 7), (7, 8)])
+        output = model(torch.randn(9, 8))
+        self.assertEqual(output.latent.shape, (9, 4))
+        self.assertEqual(output.reconstruction.shape, (9, 8))
+
+    def test_vector_sum_loss_and_l2_reconstruction(self) -> None:
+        torch.manual_seed(42)
+        model = RQVAE(
+            8,
+            [7, 6],
+            4,
+            [3, 4, 5],
+            reconstruction_normalization="l2",
+            squared_error_reduction="vector_sum",
+        )
+        inputs = torch.randn(9, 8)
+        inputs = torch.nn.functional.normalize(inputs, dim=1)
+        output = model(inputs)
+
+        self.assertTrue(
+            torch.allclose(
+                torch.linalg.vector_norm(output.reconstruction, dim=1),
+                torch.ones(9),
+                atol=1e-6,
+            )
+        )
+        expected_reconstruction_loss = (
+            (output.reconstruction - inputs).square().sum(dim=1).mean()
+        )
+        self.assertTrue(
+            torch.allclose(
+                output.reconstruction_loss,
+                expected_reconstruction_loss,
+            )
+        )
+
+    def test_reconstruction_loss_weight_only_scales_total_objective(self) -> None:
+        torch.manual_seed(42)
+        model = RQVAE(
+            8,
+            6,
+            4,
+            [3, 4, 5],
+            reconstruction_loss_weight=2.5,
+        )
+        output = model(torch.randn(9, 8))
+        expected_total = (
+            2.5 * output.reconstruction_loss
+            + output.codebook_loss
+            + 0.25 * output.commitment_loss
+        )
+        torch.testing.assert_close(output.total_loss, expected_total)
+
+    def test_hard_utilization_loss_penalizes_collapsed_codes_and_backpropagates(
+        self,
+    ) -> None:
+        collapsed_distances = torch.tensor(
+            [[0.0, 2.0, 4.0, 6.0]] * 8,
+            requires_grad=True,
+        )
+        balanced_distances = torch.full((8, 4), 6.0)
+        balanced_distances[
+            torch.arange(8), torch.arange(8) % 4
+        ] = 0.0
+
+        collapsed_loss = hard_utilization_loss(
+            collapsed_distances,
+            temperature=0.5,
+        )
+        balanced_loss = hard_utilization_loss(
+            balanced_distances,
+            temperature=0.5,
+        )
+
+        self.assertGreater(float(collapsed_loss.detach()), 0.0)
+        self.assertAlmostEqual(float(balanced_loss.detach()), 0.0, places=12)
+        collapsed_loss.backward()
+        self.assertIsNotNone(collapsed_distances.grad)
+        self.assertTrue(torch.isfinite(collapsed_distances.grad).all())
+        self.assertGreater(float(collapsed_distances.grad.abs().sum()), 0.0)
+
+    def test_diversity_schedule_only_changes_total_objective(self) -> None:
+        torch.manual_seed(42)
+        model = RQVAE(
+            8,
+            6,
+            4,
+            [4, 4, 4],
+            diversity_loss_weight=0.25,
+            diversity_scale=0.05,
+            diversity_temperature=0.5,
+        )
+        inputs = torch.randn(16, 8)
+        inactive = model(inputs, diversity_active=False)
+        active = model(inputs, diversity_active=True)
+
+        self.assertGreater(float(active.diversity_loss.detach()), 0.0)
+        self.assertEqual(float(inactive.diversity_loss.detach()), 0.0)
+        torch.testing.assert_close(active.codes, inactive.codes)
+        torch.testing.assert_close(
+            active.total_loss,
+            inactive.total_loss + 0.25 * active.diversity_loss,
+        )
+
+    def test_tiger_bge_config_uses_data_adapted_learning_rate(self) -> None:
+        base_path = PROJECT_ROOT / "configs/rqvae_beijing.yaml"
+        tiger_path = PROJECT_ROOT / "configs/rqvae_tiger_bge_m3.yaml"
+        shared_protocol_fields = (
+            "input_dim",
+            "hidden_dim",
+            "latent_dim",
+            "codebook_sizes",
+            "codebook_loss_weight",
+            "commitment_loss_weight",
+            "seed",
+            "batch_size",
+            "block_rows",
+            "max_epochs",
+            "checkpoint_epochs",
+            "validation_ratio",
+            "weight_decay",
+            "gradient_clip_norm",
+            "kmeans_backend",
+            "kmeans_sample_size",
+            "kmeans_iterations",
+            "kmeans_batch_size",
+            "kmeans_max_points_per_centroid",
+        )
+
+        for capacity in (256, 512, 1024):
+            base = load_training_config(
+                base_path,
+                PROJECT_ROOT,
+                f"BJ-RQVAE-{capacity}x3",
+                max_epochs=20,
+                checkpoint_epochs=(20,),
+            )
+            tiger = load_training_config(
+                tiger_path,
+                PROJECT_ROOT,
+                f"TIGER-BGE-M3-{capacity}x3",
+            )
+            self.assertEqual(
+                {
+                    field: getattr(tiger, field)
+                    for field in shared_protocol_fields
+                },
+                {
+                    field: getattr(base, field)
+                    for field in shared_protocol_fields
+                },
+            )
+            self.assertEqual(tiger.learning_rate, 3e-4)
+            self.assertEqual(base.learning_rate, 1e-3)
+
+    def test_genpoi_geope_config_declares_three_capacity_experiments(self) -> None:
+        config_path = (
+            PROJECT_ROOT / "configs/rqvae_genpoi_bge_m3_geope.yaml"
+        )
+        for capacity in (256, 512, 1024):
+            config = load_training_config(
+                config_path,
+                PROJECT_ROOT,
+                f"GenPOI-BGE-M3-GeoPE-{capacity}x3",
+            )
+            self.assertEqual(
+                config.codebook_sizes,
+                (capacity, capacity, capacity),
+            )
+            self.assertEqual(config.input_dim, 1024)
+            self.assertIsNone(config.hidden_dim)
+            self.assertEqual(config.hidden_dims, (512, 256, 128))
+            self.assertEqual(config.latent_dim, 32)
+            self.assertEqual(config.learning_rate, 5e-4)
+            self.assertEqual(config.reconstruction_normalization, "l2")
+            self.assertEqual(config.squared_error_reduction, "vector_sum")
+            self.assertEqual(config.max_epochs, 20)
+            self.assertEqual(config.checkpoint_epochs, (20,))
+            self.assertEqual(
+                config.embedding_manifest_path.name,
+                "manifest.json",
+            )
+            self.assertIn(
+                "beijing_poi_bge_m3_genpoi_geope",
+                str(config.embeddings_path),
+            )
+            payload = config_payload(config)
+            self.assertNotIn("hidden_dim", payload)
+            self.assertEqual(payload["hidden_dims"], [512, 256, 128])
+
+    def test_legacy_single_hidden_layer_payload_is_unchanged(self) -> None:
+        config = load_training_config(
+            PROJECT_ROOT / "configs/rqvae_tiger_bge_m3.yaml",
+            PROJECT_ROOT,
+            "TIGER-BGE-M3-256x3",
+        )
+        self.assertEqual(config.hidden_dim, 512)
+        self.assertEqual(config.hidden_dims, (512,))
+        payload = config_payload(config)
+        self.assertEqual(payload["hidden_dim"], 512)
+        self.assertNotIn("hidden_dims", payload)
+        self.assertNotIn("reconstruction_normalization", payload)
+        self.assertNotIn("squared_error_reduction", payload)
+        self.assertNotIn("reconstruction_loss_weight", payload)
+        self.assertNotIn("feature_block_weights", payload)
+        self.assertNotIn("diversity_loss_weight", payload)
+        self.assertNotIn("diversity_scale", payload)
+        self.assertNotIn("diversity_temperature", payload)
+        self.assertNotIn("diversity_start_epoch", payload)
 
     def write_training_fixture(self) -> Path:
         rng = np.random.default_rng(42)

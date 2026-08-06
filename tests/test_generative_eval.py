@@ -25,9 +25,12 @@ from poi_gr.generative_eval import (  # noqa: E402
     RunProgressStore,
     authorize_test_file,
     build_fixed_validation_subset,
+    build_reference_aligned_validation_subset,
     classify_error_types,
     hit_and_ndcg,
+    load_ssp_predictions,
     rank_and_deduplicate_candidates,
+    target_pid_is_confined_to_causal_history,
     validate_split_manifest,
 )
 from poi_gr.pid_trie import (  # noqa: E402
@@ -145,6 +148,32 @@ class GenerativeEvalTest(unittest.TestCase):
         )
         self.assertEqual(batch.duplicate_count, 1)
         self.assertEqual(batch.valid_pid_count, 3)
+
+    def test_repeated_target_pid_is_allowed_only_in_causal_history(self) -> None:
+        target = "<G_w><G_x><G_4><G_f><G_f><G_w><S1_1><S2_2><S3_3>"
+        history = (
+            "<HISTORY>\n"
+            f"<POI_PID>{target}</POI_PID>\n"
+            "</HISTORY>\n"
+            "<CURRENT>\n<QUERY>repeat visit</QUERY>\n</CURRENT>"
+        )
+        self.assertTrue(target_pid_is_confined_to_causal_history(history, target))
+
+        current_leak = history.replace(
+            "<QUERY>repeat visit</QUERY>",
+            f"<QUERY>{target}</QUERY>",
+        )
+        self.assertFalse(
+            target_pid_is_confined_to_causal_history(current_leak, target)
+        )
+
+        history_query_leak = history.replace(
+            "<HISTORY>\n",
+            f"<HISTORY>\n<QUERY>{target}</QUERY>\n",
+        )
+        self.assertFalse(
+            target_pid_is_confined_to_causal_history(history_query_leak, target)
+        )
 
     def test_error_classification_and_dedup_condition(self) -> None:
         errors = classify_error_types(
@@ -277,6 +306,76 @@ class GenerativeEvalTest(unittest.TestCase):
             "frozen",
         )
 
+    def test_beijing_ssp_predictions_use_direct_safe_depths(self) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        predictions_dir = self.root / "beijing_ssp"
+        predictions_dir.mkdir()
+        predictions_path = predictions_dir / "predictions.parquet"
+        pq.write_table(
+            pa.table(
+                {
+                    "sample_id": ["a", "b"],
+                    "user_gid": ["wx4g0b", "wx4g0c"],
+                    "predicted_lambda": pa.array([0, 4], type=pa.int8()),
+                    "prefill_length": pa.array([0, 4], type=pa.int8()),
+                }
+            ),
+            predictions_path,
+        )
+        output_hash = __import__("hashlib").sha256(
+            predictions_path.read_bytes()
+        ).hexdigest()
+        (predictions_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "genpoi-beijing-ssp-predictions-v1",
+                    "status": "completed",
+                    "selection_strategy": "direct_ordinal_safe_prefix",
+                    "useful_prefix_depths": [3, 4, 5, 6],
+                    "rows": 2,
+                    "limit": None,
+                    "source_validation_jsonl_sha256": "fixed-valid-hash",
+                    "target_fields_used": [],
+                    "output_file": str(predictions_path),
+                    "output_sha256": output_hash,
+                }
+            ),
+            encoding="utf-8",
+        )
+        predictions, manifest = load_ssp_predictions(
+            predictions_dir,
+            evaluation_data_sha256="fixed-valid-hash",
+            expected_rows=2,
+        )
+        self.assertEqual(predictions["a"].prefill_length, 0)
+        self.assertEqual(predictions["b"].prefill_length, 4)
+        self.assertEqual(
+            manifest["schema_version"],
+            "genpoi-beijing-ssp-predictions-v1",
+        )
+
+        table = pq.read_table(predictions_path)
+        table = table.set_column(
+            3,
+            "prefill_length",
+            pa.array([0, 3], type=pa.int8()),
+        )
+        pq.write_table(table, predictions_path)
+        manifest_path = predictions_dir / "manifest.json"
+        invalid_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        invalid_manifest["output_sha256"] = __import__("hashlib").sha256(
+            predictions_path.read_bytes()
+        ).hexdigest()
+        manifest_path.write_text(json.dumps(invalid_manifest), encoding="utf-8")
+        with self.assertRaisesRegex(GenerativeEvalError, "前缀长度非法"):
+            load_ssp_predictions(
+                predictions_dir,
+                evaluation_data_sha256="fixed-valid-hash",
+                expected_rows=2,
+            )
+
     def test_fixed_validation_subset_is_deterministic_and_source_ordered(self) -> None:
         valid = self.root / "valid.jsonl"
         records = [
@@ -316,6 +415,115 @@ class GenerativeEvalTest(unittest.TestCase):
             first.manifest["selected_row_indices_sha256"],
             second.manifest["selected_row_indices_sha256"],
         )
+
+    def test_reference_subset_aligns_business_keys_and_target_poi(self) -> None:
+        valid = self.root / "valid.jsonl"
+        reference = self.root / "reference.jsonl"
+        source_records = [
+            {
+                "sample_id": "method-c",
+                "order_id": "order-c",
+                "searchid": "search-c",
+                "target_poi_id": "poi-c",
+            },
+            {
+                "sample_id": "method-a",
+                "order_id": "order-a",
+                "searchid": "search-a",
+                "target_poi_id": "poi-a",
+            },
+            {
+                "sample_id": "method-b",
+                "order_id": "order-b",
+                "searchid": "search-b",
+                "target_poi_id": "poi-b",
+            },
+        ]
+        reference_records = [
+            {
+                "sample_id": "baseline-b",
+                "order_id": "order-b",
+                "searchid": "search-b",
+                "target_poi_id": "poi-b",
+            },
+            {
+                "sample_id": "baseline-a",
+                "order_id": "order-a",
+                "searchid": "search-a",
+                "target_poi_id": "poi-a",
+            },
+        ]
+        valid.write_text(
+            "".join(json.dumps(record) + "\n" for record in source_records),
+            encoding="utf-8",
+        )
+        reference.write_text(
+            "".join(json.dumps(record) + "\n" for record in reference_records),
+            encoding="utf-8",
+        )
+        source_hash = __import__("hashlib").sha256(valid.read_bytes()).hexdigest()
+        subset = build_reference_aligned_validation_subset(
+            valid,
+            reference,
+            self.root / "aligned",
+            source_rows=3,
+            source_sha256=source_hash,
+        )
+        aligned = [
+            json.loads(line)
+            for line in subset.data_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [record["order_id"] for record in aligned],
+            ["order-b", "order-a"],
+        )
+        self.assertEqual(
+            subset.manifest["selection_method"],
+            "exact_order_id_searchid_match",
+        )
+        rebuilt = build_reference_aligned_validation_subset(
+            valid,
+            reference,
+            self.root / "aligned",
+            source_rows=3,
+            source_sha256=source_hash,
+        )
+        self.assertEqual(subset.sha256, rebuilt.sha256)
+
+    def test_reference_subset_rejects_target_poi_mismatch(self) -> None:
+        valid = self.root / "valid.jsonl"
+        reference = self.root / "reference.jsonl"
+        valid.write_text(
+            json.dumps(
+                {
+                    "order_id": "order-a",
+                    "searchid": "search-a",
+                    "target_poi_id": "poi-new",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        reference.write_text(
+            json.dumps(
+                {
+                    "order_id": "order-a",
+                    "searchid": "search-a",
+                    "target_poi_id": "poi-old",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        source_hash = __import__("hashlib").sha256(valid.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(GenerativeEvalError, "目标 POI 不一致"):
+            build_reference_aligned_validation_subset(
+                valid,
+                reference,
+                self.root / "mismatch",
+                source_rows=1,
+                source_sha256=source_hash,
+            )
 
 
 if __name__ == "__main__":

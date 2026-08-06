@@ -12,12 +12,24 @@ import numpy as np
 
 from scripts.evaluate_embedding_retrieval import (
     EvaluationError,
+    _pooling_description,
     compute_metrics,
     validate_reference_eval_order,
 )
 
 
 class EmbeddingRetrievalMetricsTest(unittest.TestCase):
+    def test_pooling_description_supports_qwen_and_bge_modes(self) -> None:
+        class Pooling:
+            pooling_mode_cls_token = False
+            pooling_mode_lasttoken = True
+
+        self.assertEqual(_pooling_description([object(), Pooling()]), "last_token")
+
+        Pooling.pooling_mode_cls_token = True
+        Pooling.pooling_mode_lasttoken = False
+        self.assertEqual(_pooling_description([Pooling()]), "cls")
+
     def test_metrics_and_query_length_buckets(self) -> None:
         records = [
             {"query": "北", "poi_id": "p0"},

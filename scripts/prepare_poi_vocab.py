@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Extend a local Qwen tokenizer with deterministic POI/PID tokens."""
+"""Extend a local Qwen tokenizer with deterministic POI identifier tokens."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any, Sequence
 
 SCHEMA_VERSION = "poi-vocab-v1"
 EXPECTED_TOKEN_COUNT = 3620
+DEFAULT_MAPPING_FILENAME = "poi_token_mapping.json"
 TOKENIZER_FILES = (
     "added_tokens.json",
     "merges.txt",
@@ -57,9 +58,14 @@ def sha256_named_files(directory: Path, names: Sequence[str]) -> str:
     return digest.hexdigest()
 
 
-def load_requested_tokens(path: Path) -> list[str]:
+def load_requested_tokens(
+    path: Path,
+    expected_token_count: int = EXPECTED_TOKEN_COUNT,
+) -> list[str]:
     """Load and validate the ordered token contract."""
 
+    if expected_token_count <= 0:
+        raise PoiVocabError("expected_token_count 必须大于 0")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -69,9 +75,12 @@ def load_requested_tokens(path: Path) -> list[str]:
     tokens = payload.get("additional_special_tokens")
     if not isinstance(tokens, list) or not all(isinstance(token, str) for token in tokens):
         raise PoiVocabError("additional_special_tokens 必须是字符串列表")
-    if payload.get("token_count") != EXPECTED_TOKEN_COUNT or len(tokens) != EXPECTED_TOKEN_COUNT:
+    if (
+        payload.get("token_count") != expected_token_count
+        or len(tokens) != expected_token_count
+    ):
         raise PoiVocabError(
-            f"新增 Token 数必须为 {EXPECTED_TOKEN_COUNT}，实际为 {len(tokens)}"
+            f"新增 Token 数必须为 {expected_token_count}，实际为 {len(tokens)}"
         )
     if len(tokens) != len(set(tokens)):
         raise PoiVocabError("新增 Token 列表存在重复项")
@@ -142,10 +151,11 @@ def _mapping_payload(
     tokens: Sequence[str],
     fingerprints: dict[str, str],
     extended_tokenizer_sha256: str,
+    schema_version: str,
 ) -> dict[str, Any]:
     mapping = {token: int(tokenizer.convert_tokens_to_ids(token)) for token in tokens}
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "original_model_path": str(model_dir.resolve()),
         "original_model_sha256": fingerprints["model_sha256"],
         "original_config_sha256": fingerprints["config_sha256"],
@@ -166,12 +176,16 @@ def validate_existing_output(
     model_dir: Path,
     tokens_path: Path,
     tokens: Sequence[str],
+    *,
+    expected_token_count: int = EXPECTED_TOKEN_COUNT,
+    mapping_filename: str = DEFAULT_MAPPING_FILENAME,
+    schema_version: str = SCHEMA_VERSION,
 ) -> dict[str, Any]:
     """Validate an existing expanded model without overwriting it."""
 
     from transformers import AutoTokenizer
 
-    mapping_path = output_dir / "poi_token_mapping.json"
+    mapping_path = output_dir / mapping_filename
     try:
         payload = json.loads(mapping_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -184,7 +198,8 @@ def validate_existing_output(
         "original_config_sha256": fingerprints["config_sha256"],
         "original_tokenizer_sha256": fingerprints["tokenizer_sha256"],
         "token_source_sha256": sha256_file(tokens_path),
-        "added_token_count": EXPECTED_TOKEN_COUNT,
+        "added_token_count": expected_token_count,
+        "schema_version": schema_version,
     }
     for key, value in expected.items():
         if payload.get(key) != value:
@@ -206,7 +221,15 @@ def validate_existing_output(
     return payload
 
 
-def prepare_poi_vocab(model_dir: Path, tokens_path: Path, output_dir: Path) -> dict[str, Any]:
+def prepare_poi_vocab(
+    model_dir: Path,
+    tokens_path: Path,
+    output_dir: Path,
+    *,
+    expected_token_count: int = EXPECTED_TOKEN_COUNT,
+    mapping_filename: str = DEFAULT_MAPPING_FILENAME,
+    schema_version: str = SCHEMA_VERSION,
+) -> dict[str, Any]:
     """Create or validate the deterministic expanded Qwen model."""
 
     import torch
@@ -215,9 +238,21 @@ def prepare_poi_vocab(model_dir: Path, tokens_path: Path, output_dir: Path) -> d
     model_dir = model_dir.resolve()
     tokens_path = tokens_path.resolve()
     output_dir = output_dir.resolve()
-    tokens = load_requested_tokens(tokens_path)
+    if Path(mapping_filename).name != mapping_filename:
+        raise PoiVocabError("mapping_filename 必须是单个文件名")
+    if not schema_version.strip():
+        raise PoiVocabError("schema_version 不能为空")
+    tokens = load_requested_tokens(tokens_path, expected_token_count)
     if output_dir.exists():
-        return validate_existing_output(output_dir, model_dir, tokens_path, tokens)
+        return validate_existing_output(
+            output_dir,
+            model_dir,
+            tokens_path,
+            tokens,
+            expected_token_count=expected_token_count,
+            mapping_filename=mapping_filename,
+            schema_version=schema_version,
+        )
 
     fingerprints = base_fingerprints(model_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
@@ -225,9 +260,9 @@ def prepare_poi_vocab(model_dir: Path, tokens_path: Path, output_dir: Path) -> d
     config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
     original_model_vocab_size = int(config["vocab_size"])
     added_count = tokenizer.add_tokens(list(tokens), special_tokens=False)
-    if added_count != EXPECTED_TOKEN_COUNT:
+    if added_count != expected_token_count:
         raise PoiVocabError(
-            f"tokenizer.add_tokens 必须新增 {EXPECTED_TOKEN_COUNT} 个，实际为 {added_count}"
+            f"tokenizer.add_tokens 必须新增 {expected_token_count} 个，实际为 {added_count}"
         )
     mapping = {token: int(tokenizer.convert_tokens_to_ids(token)) for token in tokens}
     verify_atomic_tokens(tokenizer, tokens, mapping)
@@ -277,8 +312,9 @@ def prepare_poi_vocab(model_dir: Path, tokens_path: Path, output_dir: Path) -> d
             tokens=tokens,
             fingerprints=fingerprints,
             extended_tokenizer_sha256=extended_hash,
+            schema_version=schema_version,
         )
-        (temp_dir / "poi_token_mapping.json").write_text(
+        (temp_dir / mapping_filename).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
@@ -297,12 +333,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", type=Path, required=True, help="基础生成模型目录")
     parser.add_argument("--tokens", type=Path, required=True, help="special_tokens.json")
     parser.add_argument("--output-dir", type=Path, required=True, help="扩词表模型输出目录")
+    parser.add_argument(
+        "--expected-token-count",
+        type=int,
+        default=EXPECTED_TOKEN_COUNT,
+        help=f"预期新增 Token 数，默认 {EXPECTED_TOKEN_COUNT}",
+    )
+    parser.add_argument(
+        "--mapping-filename",
+        default=DEFAULT_MAPPING_FILENAME,
+        help=f"Token 映射文件名，默认 {DEFAULT_MAPPING_FILENAME}",
+    )
+    parser.add_argument(
+        "--schema-version",
+        default=SCHEMA_VERSION,
+        help=f"映射 Schema 版本，默认 {SCHEMA_VERSION}",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    payload = prepare_poi_vocab(args.model_dir, args.tokens, args.output_dir)
+    payload = prepare_poi_vocab(
+        args.model_dir,
+        args.tokens,
+        args.output_dir,
+        expected_token_count=args.expected_token_count,
+        mapping_filename=args.mapping_filename,
+        schema_version=args.schema_version,
+    )
     print(
         "词表扩展校验通过："
         f"{payload['original_vocab_size']} -> {payload['new_vocab_size']}，"

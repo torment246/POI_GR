@@ -28,7 +28,6 @@ PID_SCHEMA_VERSION = "geohash-pid-v1"
 PID_METRICS_SCHEMA_VERSION = "geohash-pid-evaluation-v1"
 PID_COMPARISON_SCHEMA_VERSION = "geohash-pid-comparison-v1"
 EXPECTED_SID_CODEBOOK_SIZES = (1024, 1024, 1024)
-EXPECTED_SID_EXPERIMENT_ID = "BJ-RQVAE-1024x3"
 EXPECTED_SID_CHECKPOINT_EPOCH = 20
 OUTPUT_FILENAMES = (
     "gid_codes.npy",
@@ -933,10 +932,10 @@ def build_geohash_pid(
             f"{list(sid_input.codebook_sizes)}"
         )
     sid_manifest = _load_json_object(sid_manifest_path, "SID manifest")
-    if sid_manifest.get("experiment_id") != EXPECTED_SID_EXPERIMENT_ID:
+    experiment_id = sid_manifest.get("experiment_id")
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
         raise GeohashPidError(
-            f"PID-001 要求 experiment_id={EXPECTED_SID_EXPERIMENT_ID}，实际 "
-            f"{sid_manifest.get('experiment_id')}"
+            "PID-001 要求 SID manifest 包含非空 experiment_id"
         )
     checkpoint = sid_manifest.get("checkpoint")
     if (
