@@ -1,0 +1,1 @@
+"""GNPR-SID method implementation."""

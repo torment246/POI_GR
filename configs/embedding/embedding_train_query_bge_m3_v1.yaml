@@ -1,0 +1,19 @@
+job_name: train_query_bge_m3_v1
+
+input:
+  query_stats_dir: outputs/embeddings/query_augmented_bge_m3/train_query_stats_v1
+  expected_manifest_sha256: 7ba75a755eef92fb3ebd93c6672642b993699f80db47630ab5efe7bddb9134b3
+  expected_queries: 1408778
+
+model:
+  source_embedding_config: configs/embedding/embedding_bge_m3.yaml
+  device: cuda
+  batch_size: 256
+  encode_buffer_size: 8192
+  max_seq_length: 128
+
+output:
+  dir: outputs/embeddings/query_augmented_bge_m3/train_query_embeddings_v1
+  embedding_dtype: float16
+  checkpoint_interval_batches: 20
+  resume: true

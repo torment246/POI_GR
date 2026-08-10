@@ -1,0 +1,11 @@
+source:
+  sft_dir: data/sft/beijing_order_main_v1
+  reference_subset: outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl
+
+output:
+  dir: data/eval/embedding_retrieval/sft_validation_10k_v1
+
+expected:
+  rows: 10000
+  train_rows: 7586410
+  valid_rows: 597421

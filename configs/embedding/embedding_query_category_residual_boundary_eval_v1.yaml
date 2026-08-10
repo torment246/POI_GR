@@ -1,0 +1,50 @@
+experiment_id: EXP-20260808-02
+
+input:
+  eval_data: data/eval/embedding_retrieval/sft_validation_10k_v1/eval.jsonl
+  expected_eval_rows: 10000
+  expected_eval_sha256: 5557769526bd1a41a86adac5efb26eb2bf878fed8b2e2dad9f58afe93663e713
+  baseline_run_dir: outputs/evaluation/sft_validation_10k_v1/bge_m3_no_instruction
+  expected_baseline_results_sha256: 8052a40b64b6b875c61a596388a764644042bb701936a5394eda4d9ff4eb3a9c
+  query_embeddings: outputs/evaluation/sft_validation_10k_v1/query_embeddings/bge_m3_no_instruction.npy
+  expected_query_embeddings_sha256: 98e2032b86b76cf42991dc1d1f4967ff456661fb32fbae185652163c85bf70e0
+  query_mapping: outputs/evaluation/sft_validation_10k_v1/query_embeddings/bge_m3_no_instruction_rows.jsonl
+  expected_query_mapping_sha256: d512aa206468ea672b473ce38c353eca703c64289ac890d9a935cd3c9b2f855f
+  poi_embedding_dir: outputs/embeddings/beijing_poi_bge_m3
+  expected_poi_embeddings_sha256: ab286a8932196f84bbda5dc1965202b9aedadbd770e3e38cf78e5e1a63184c90
+  expected_poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  expected_poi_rows: 2337178
+  aggregates_dir: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1
+  expected_aggregates_manifest_sha256: 57b21716b3c171f5b5641e1abb90d4e06217c227abb7402e2525d818d60547bd
+  category_residual_dir: outputs/embeddings/query_augmented_bge_m3/query_category_residual_boundary_v1
+  expected_category_residual_manifest_sha256: ae65ec6bd8fda28228822a080fb65a131d933d68acc0ae6aae903c46f8b303d8
+  category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+  expected_category_indices_sha256: 5d895b0f79192fa4d82f6f158ded85d93d24e72e2e677f26475d08978c61e7a5
+  reference_run_dir: outputs/evaluation/sft_validation_10k_v1/query_category_residual_bge_m3_v1/e4_beta_0p75/alpha_0p30
+  expected_reference_results_sha256: d9040ded85caad1a72d8f03e9e30cd4567d3e85f7323fdb09527b486d8bfd9b6
+
+fusion:
+  alphas: [0.30]
+  methods:
+    e4_beta_0p85:
+      aggregate_file: e2_query_weighted.npy
+      residual_beta: 0.85
+    e4_beta_1p00:
+      aggregate_file: e2_query_weighted.npy
+      residual_beta: 1.00
+  selection_metric: ndcg_at_10
+  tie_break_metrics: [hit_at_10, mrr_at_10]
+  fusion_chunk_rows: 8192
+
+faiss:
+  type: IndexFlatIP
+  device: gpu
+  gpu_id: 0
+  use_float16: false
+  initial_add_rows: 1000000
+  memory_headroom_gib: 4.0
+  query_batch_size: 64
+  top_k: 20
+
+output:
+  dir: outputs/evaluation/sft_validation_10k_v1/query_category_residual_boundary_bge_m3_v1

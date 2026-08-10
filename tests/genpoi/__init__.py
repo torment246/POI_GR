@@ -1,0 +1,1 @@
+"""GenPOI method tests."""

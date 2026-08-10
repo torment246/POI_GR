@@ -82,11 +82,14 @@ class MethodCatalogTest(unittest.TestCase):
         self.assertEqual(tiger.status, "implemented")
         self.assertTrue(all(stage.status == "ready" for stage in tiger.stages))
 
-        for method_id in ("genpoi", "gnpr_sid"):
-            method = catalog[method_id]
-            self.assertEqual(method.status, "partial")
-            statuses = {stage.status for stage in method.stages}
-            self.assertNotEqual(statuses, {"ready"})
+        gnpr = catalog["gnpr_sid"]
+        self.assertEqual(gnpr.status, "implemented")
+        self.assertTrue(all(stage.status == "ready" for stage in gnpr.stages))
+
+        genpoi = catalog["genpoi"]
+        self.assertEqual(genpoi.status, "partial")
+        statuses = {stage.status for stage in genpoi.stages}
+        self.assertNotEqual(statuses, {"ready"})
 
     def test_missing_repository_command_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -141,7 +144,7 @@ class MethodCatalogTest(unittest.TestCase):
         payload["pipeline"]["train"]["status"] = "missing"
         payload["pipeline"]["train"]["commands"] = [
             {
-                "entrypoint": "scripts/build_sft_main_data.py",
+                "entrypoint": "scripts/v1/build_sft_data.py",
                 "config": None,
                 "purpose": "invalid",
             }

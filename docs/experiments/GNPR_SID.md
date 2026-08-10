@@ -7,7 +7,8 @@
 - 8192 用户哈希行为版已完成 703,306 条交互 POI 的三容量训练，但最大碰撞桶由用户哈希别名主导，只保留为消融和失败审计，不冻结为下游标识。
 - 全量 content-geo 输入覆盖 2,337,178 条 POI；特征权重固定为 `1/0.25/0.25`，避免类别和区域稀疏块主导重构。
 - GNPR 发布代码实际启用的 utilization diversity loss 已接入，`λ=0.25`、内部 scale `0.05`，20 epoch 适配为第 7 轮起启用；未配置该项的 V1/TIGER/GenPOI 行为保持不变。
-- 256/512/1024 三容量四卡训练均已完成 20 epoch 并生成固定 checkpoint；256/512 稳定，1024 从 epoch 17 起明显坍塌。全量 SID 尚未导出，暂不冻结最终容量。
+- 256/512/1024 三容量四卡训练和全量导出均已完成；最终冻结 `512×3 / epoch 20 + conditional Dedup Token`，2,337,178 条 identifier 全局唯一。
+- Qwen3-0.6B 四卡 A100 全参数 SFT 已完成 3 epoch；在与 TIGER 相同的固定 10,000 条 Validation 上直接无约束 Beam=10 生成，epoch 3 最优，HR@1/HR@10/NDCG@10 为 49.66%/83.07%/67.2390%，Valid ID Rate 为 78.808%。
 
 ## 实验记录
 ## EXP-20260805-01 GNPR-SID 三容量 RQ-VAE 全量对比
@@ -28,16 +29,16 @@
 - 256 容量评估 epoch 10/20；512 和 1024 仅评估 epoch 20。256 任务曾在 epoch 5 后为取消逐轮评估而受控停止，并从 checkpoint 恢复，正式结果未受影响；512 完成后串行启动 1024，两个任务及串行链退出码均为 0。
 
 ~~~bash
-python scripts/train_gnpr_rqvae.py \
-  --config configs/rqvae_gnpr_sid.yaml \
+python scripts/gnpr/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_sid.yaml \
   --experiment GNPR-SID-256x3
 
-python scripts/train_gnpr_rqvae.py \
-  --config configs/rqvae_gnpr_sid.yaml \
+python scripts/gnpr/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_sid.yaml \
   --experiment GNPR-SID-512x3
 
-python scripts/train_gnpr_rqvae.py \
-  --config configs/rqvae_gnpr_sid.yaml \
+python scripts/gnpr/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_sid.yaml \
   --experiment GNPR-SID-1024x3
 ~~~
 
@@ -87,8 +88,8 @@ python scripts/train_gnpr_rqvae.py \
 - K-Means 三层均使用全部 256 个码，初始化样本均方距离依次为 0.00124449/0.00073305/0.00049922，初始化总耗时 65.45 秒。
 
 ~~~bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_gnpr_content_geo.yaml \
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_content_geo.yaml \
   --experiment GNPR-ContentGeo-BGE-M3-256x3
 ~~~
 
@@ -114,8 +115,8 @@ python scripts/train_rqvae.py \
 - 本次使用全量 POI 和 500,000 条 K-Means 样本，只把最大训练轮数与 checkpoint 改为 epoch 2；不属于缩小数据或码本的 smoke。
 
 ~~~bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_gnpr_content_geo.yaml \
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_content_geo.yaml \
   --experiment GNPR-ContentGeo-BGE-M3-256x3 \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/diagnostics/GNPR-ContentGeo-BGE-M3-256x3-weighted-v2-e2 \
   --max-epochs 2 \
@@ -149,8 +150,8 @@ python scripts/train_rqvae.py \
 - 诊断任务的 `max_epochs=2` 属于配置签名，不能直接恢复到 20 轮；正式任务在新目录使用相同 seed 和协议重新初始化，避免篡改 checkpoint 签名。
 
 ~~~bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_gnpr_content_geo.yaml \
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_content_geo.yaml \
   --experiment GNPR-ContentGeo-BGE-M3-256x3 \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/GNPR-ContentGeo-BGE-M3-256x3-weighted-v2
 ~~~
@@ -176,7 +177,7 @@ python scripts/train_rqvae.py \
 - 平台为 4 张 NVIDIA RTX 6000D；256/512/1024 分别绑定 GPU 0/1/2，GPU 3 保留余量。Python 3.10.20、PyTorch 2.9.1+cu128，Adam 学习率 `3e-4`、batch 4096、seed 42。
 
 ~~~bash
-bash run_train_gnpr_content_geo_4x6000d_20epoch.sh
+bash launchers/run_train_gnpr_content_geo_4x6000d_20epoch.sh
 ~~~
 
 ### Epoch 20 监控结果与产物
@@ -205,10 +206,10 @@ bash run_train_gnpr_content_geo_4x6000d_20epoch.sh
 
 ### 配置与命令
 
-- 三组均人工选择 `checkpoint_epoch_20.pt`；导出 batch 为 8192。评估指标和 TIGER 的 `EXP-20260730-01` 均来自 `scripts/export_rqvae_sid.py` 与 `src/poi_gr/sid_evaluation.py`，没有为 GNPR 修改唯一率或碰撞定义。
+- 三组均人工选择 `checkpoint_epoch_20.pt`；导出 batch 为 8192。评估指标和 TIGER 的 `EXP-20260730-01` 均来自 `scripts/sid/export_rqvae.py` 与 `src/poi_gr/sid/evaluation.py`，没有为 GNPR 修改唯一率或碰撞定义。
 
 ~~~bash
-python scripts/export_rqvae_sid.py \
+python scripts/sid/export_rqvae.py \
   --checkpoint checkpoint_epoch_20.pt \
   --run-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-<CAPACITY>x3 \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-<CAPACITY>x3/evaluations/epoch_20 \
@@ -284,8 +285,8 @@ Val 重构和码字数来自固定 23,372 条 Validation；完整 SID、碰撞�
 - 环境为Python 3.10.20和服务器真实环境的一张NVIDIA RTX A6000 48GB；三层Faiss GPU K-Means均使用500,000条样本和20次迭代。训练耗时1,917.18秒。
 
 ~~~bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_gnpr_content_geo.yaml \
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_gnpr_content_geo.yaml \
   --experiment GNPR-ContentGeo-BGE-M3-1024x3 \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/epoch16_rerun_a6000/GNPR-ContentGeo-BGE-M3-1024x3 \
   --max-epochs 16 \
@@ -293,7 +294,7 @@ python scripts/train_rqvae.py \
   --no-resume \
   --no-progress
 
-python scripts/export_rqvae_sid.py \
+python scripts/sid/export_rqvae.py \
   --checkpoint checkpoint_epoch_16.pt \
   --run-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/epoch16_rerun_a6000/GNPR-ContentGeo-BGE-M3-1024x3 \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/epoch16_rerun_a6000/GNPR-ContentGeo-BGE-M3-1024x3/evaluations/epoch_16 \
@@ -351,7 +352,7 @@ python scripts/export_rqvae_sid.py \
 ### 命令
 
 ~~~bash
-python scripts/build_gnpr_identifiers.py \
+python scripts/gnpr/build_identifiers.py \
   --sid-manifest outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-512x3/evaluations/epoch_20/sid_manifest.json \
   --output-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-512x3/gnpr_ids/epoch_20 \
   --chunk-rows 100000
@@ -397,7 +398,7 @@ python scripts/build_gnpr_identifiers.py \
 ### 命令
 
 ~~~bash
-python scripts/build_gnpr_sft_data.py \
+python scripts/gnpr/build_sft_data.py \
   --orders-dir data/beijing_order_clean_20260701_20260714_history10_20260401_20260630_json \
   --gnpr-id-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-512x3/gnpr_ids/epoch_20 \
   --output-dir data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1 \
@@ -406,7 +407,7 @@ python scripts/build_gnpr_sft_data.py \
   --history-start 2026-04-01 --history-end 2026-06-30 \
   --max-history-events 10 --geohash-length 6
 
-python scripts/prepare_poi_vocab.py \
+python scripts/pid/prepare_vocab.py \
   --model-dir models/Qwen3-0.6B \
   --tokens data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/special_tokens.json \
   --output-dir models/Qwen3-0.6B-GNPR-Vocab-v1 \
@@ -414,7 +415,7 @@ python scripts/prepare_poi_vocab.py \
   --mapping-filename poi_token_mapping.json \
   --schema-version gnpr-vocab-v1
 
-python scripts/validate_sft_tokenization.py \
+python scripts/sft/validate_tokenization.py \
   --model-dir models/Qwen3-0.6B-GNPR-Vocab-v1 \
   --train-file data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/train.jsonl \
   --valid-file data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/valid.jsonl \
@@ -448,7 +449,126 @@ python scripts/validate_sft_tokenization.py \
 
 - 正式数据位于 `data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/`；Train/Valid/Test SHA256 分别为 `07d070618c5b3e0a113a44d9d085ea932a10126361023e0e7a0807c7a80f23da`、`b685c9b4e6f76ce05aa346a838a06d5089bdf2f23c9fc1fdc95a753221110ef8`、`4af8b5cc116dd1b4e5ba8a469d52365686269b7f0e81c9bed49f3e65f7604a38`。
 - 32 个输入分片均完整扫描；抽样核验 Messages 只包含 `user/assistant`，目标符合 `<a_i><b_j><c_k>[<d_n>]`，Prompt 不含时间、用户 ID 或 passenger 字段。
-- 扩词表模型位于 `models/Qwen3-0.6B-GNPR-Vocab-v1/`；四卡训练入口为 `run_train_gnpr_sft_4x6000d_3epoch.sh` 和 `run_train_gnpr_sft_4a100_3epoch.sh`，两者全局 batch 均为 `16×8×4=512`，按 epoch 保存且最多保留 3 个完整 checkpoint。
+- 扩词表模型位于 `models/Qwen3-0.6B-GNPR-Vocab-v1/`；四卡训练入口为 `launchers/run_train_gnpr_sft_4x6000d_3epoch.sh` 和 `launchers/run_train_gnpr_sft_4a100_3epoch.sh`，两者全局 batch 均为 `16×8×4=512`，按 epoch 保存且最多保留 3 个完整 checkpoint。
 - 正式 Tokenized Cache 位于 `data/sft/tokenized/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/`，约 30GB；数据构建与 Cache 后台任务退出码均为 0。Cache Manifest SHA256 为 `896f2fc596d75f23bd43c8146f3f69e09a2b38ded3854fc4c1bb40145a96e93f`，长度统计 SHA256 为 `ca31031b6f63d405c15fc4a5b87fcf6d2313fda248adc5af1692d5e6eddd5d8b`。
 - 总 Token 长度 P50/P90/P95/P99/P99.9/Max 为 145/295/304/336/445/944；Train/Valid 中分别有 1,580/126 条超过 512，但 Assistant 目标截断数均为 0。使用 `datasets.load_from_disk` 重载后，Train/Validation 行数、列结构和首/中/末样本固定长度均通过核验；原始 Train 前 10,000 条事件结构也无异常。
 - 本实验只完成数据、词表、Cache 和训练入口；尚未运行 GPU smoke、正式 SFT 或生成式评测，不记录 checkpoint、Loss 或召回指标。下一步先运行 20-step GPU smoke，通过后再启动一个四卡三轮任务。
+
+## EXP-20260807-01 GNPR 三轮 SFT 与固定 10,000 条 Validation 无约束评测
+
+### 目标、假设与数据版本
+
+- 目标：完成 GNPR 地图检索适配版的三轮 Qwen3-0.6B 全参数 SFT，并在与 TIGER 完全相同的固定 10,000 条 Validation 业务键上比较 epoch 1/2/3 checkpoint。
+- 假设：在数据、历史长度、全局 batch、生成 Beam 和评测样本均固定时，训练轮次增加应降低 Validation Loss 并提高 HR/NDCG；论文及作者发布实现没有提供 Trie 或地理约束解码，因此本实验直接生成条件长度 GNPR identifier，不用约束补齐非法候选。
+- SFT 数据为 `data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/`，Train/Valid/Test 为 7,586,410/597,421/606,682；训练使用同名 packed Cache，Train/Validation 为 2,758,797/201,947。固定评测集从该 Validation 按 V1/TIGER 参考样本的 `order_id + searchid` 精确对齐，业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI 错配数为 0。
+- identifier 固定为 `512×3 / epoch 20 + conditional d0-d222`，映射覆盖 2,337,178 条 POI，SHA256 为 `3cee68db4f1360b1103452e0e9d1c5e49edf5f11bf70e38b514c1037911abde2`；Tokenizer 词表为 153,474，三个 checkpoint 的 `tokenizer.json` SHA256 均为 `3556999bc37575b8886d6c2061db837678171cbb6002a69dc62aa5fb21b201f0`。
+
+### 代码状态、配置与环境
+
+- 仓库基线提交为 `e4515195097dcb10aac0f3281ee7ddc0e482886c`；训练和评测运行于包含目录整理、GNPR 评测适配器及用户既有修改的未提交工作树，未创建 commit。
+- 训练配置为 `configs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.yaml`：Qwen3-0.6B、全参数 BF16、cutoff 512、每卡 batch 16、梯度累积 8、四卡全局 batch 512、学习率 `5e-5`、3 epoch、按 epoch 保存。
+- 训练使用四卡 A100，完成 3 epoch、16,167 step，`train_loss=0.5693`、运行时间 17:30:03.58。Trainer 已完整保存最终模型和三个 checkpoint；平台随后执行旧提交的包装脚本时在第 87 行遇到不匹配双引号并以退出码 2 标记任务失败，该错误发生在 Trainer 完成、权重和指标落盘之后，不影响 checkpoint。三个 checkpoint 均经文件、epoch、Tokenizer 和实际 CUDA 生成核验。
+- 正式评测使用本地 RTX A6000 48GB、Python 3.10.20、PyTorch 2.9.1+cu128、Transformers 4.52.4；batch 32、Beam=10、返回 10 个候选、`max_new_tokens=7`。三段单例和四段碰撞 identifier 均按严格结构解析；不在冻结映射中的 identifier 保留原 Beam 排名并计为 miss，不使用 Trie、地理剪枝或候选补位。
+
+### 命令
+
+~~~bash
+python scripts/gnpr/evaluate_retrieval.py \
+  --valid-file data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl \
+  --checkpoints \
+    outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-5389 \
+    outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-10778 \
+    outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-16167 \
+  --expected-checkpoint-steps 5389 10778 16167 \
+  --expected-checkpoint-epochs 1 2 3 \
+  --tokenizer models/Qwen3-0.6B-GNPR-Vocab-v1 \
+  --identifier-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-512x3/gnpr_ids/epoch_20 \
+  --output-dir outputs/eval/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3 \
+  --num-beams 10 \
+  --per-device-eval-batch-size 32 \
+  --chunk-size 1000 \
+  --cutoff-len 512 \
+  --skip-data-hash
+~~~
+
+- 正式推理前已使用同一命令的 `--preflight-only` 完整核验源 Validation SHA256、固定子集、identifier、Tokenizer、三个 checkpoint 和前 100 条 Prompt；正式命令的 `--skip-data-hash` 只避免重复扫描 725MB 源文件，不跳过固定子集 SHA256 或 checkpoint 权重 SHA256。
+
+### 核心指标
+
+| Epoch / checkpoint | Validation Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID Rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 / `checkpoint-5389` | 0.547218 | 40.73% | 63.42% | 68.88% | 73.42% | 40.73% | 54.1633% | 56.4180% | 57.9210% | 74.799% |
+| 2 / `checkpoint-10778` | 0.421038 | 47.71% | 70.90% | 77.30% | 81.52% | 47.71% | 61.4745% | 64.1178% | 65.5149% | 79.342% |
+| 3 / `checkpoint-16167` | 0.406466 | **49.66%** | **72.61%** | **78.62%** | **83.07%** | **49.66%** | **63.2718%** | **65.7607%** | **67.2390%** | 78.808% |
+
+- 三轮均完成 10,000 条、100,000 个原始 Beam 候选；实际 batch 均为 32，未触发 OOM 回退。纯推理耗时为 1204.74/1190.01/1189.53 秒，峰值显存约 22.78GiB。
+- epoch 1/2/3 的非法候选率为 25.201%/20.658%/21.192%；主要错误均为生成的合法结构 identifier 不在冻结目录映射中，少量错误来自位置 Token、EOS、结构或长度。epoch 3 的 Valid ID Rate 略低于 epoch 2，但所有 HR/NDCG 均继续提升，因此按预设的 NDCG@10、HR@10、HR@1、Validation Loss 顺序选择 epoch 3。
+- 汇总 JSON/CSV SHA256 分别为 `e0e62cdacb4a59765b739e790d0b718adde979285c422b7c5e4eee6a44f9272c` 和 `82189cac59d7bec2445445b566b0b8fbf1eac402506c6f06ef76d7ec2d709425`；正式评测进程退出码为 0。
+
+### 产物、结论与下一步
+
+- 训练目录为 `outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/`；评测目录为 `outputs/eval/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/`，包含固定子集及 manifest、预检结果、三个正式 run 的原子进度和结果、错误 Case，以及 `valid_checkpoint_results.json/csv`。
+- 结论：GNPR 地图检索适配版的三轮 SFT 与固定子集无约束评测闭环完成，冻结 `checkpoint-16167` 为 Validation 最优 checkpoint。其 HR@1/HR@10/NDCG@10 比同口径 TIGER epoch 3 低 2.21/4.09/3.1800 个百分点，但 Valid ID Rate 高 4.703 个百分点；该结果用于完整方法链路比较，不能把差异单独归因于 SID 构建。
+- 当前不运行完整 Validation 或 Test。GNPR 复现闭环完成后，下一最小步骤回到 Query-Augmented Relational SID 创新线，固定既有 10,000 条 Query 的 BGE-M3 embedding 和行映射。
+
+## EXP-20260807-03 TIGER/GNPR SID 逐层 Teacher-Forcing 诊断
+
+### 目标、假设与数据版本
+
+- 目标：用一次前向即可得到的 gold-prefix teacher-forcing 指标，定位 GNPR epoch 3 相对 TIGER epoch 3 的生成差距首先出现在哪一层，区分 SID 前缀组织、整体 SFT 和无约束解码三类原因；本实验不重训、不改变 SID，也不运行 Beam。
+- 判据：若训练资源或整体 SFT 是主因，GNPR 各层应普遍更差；若 SID 层级组织是主因，差距应集中在特定前缀层且给定正确前缀后的后层可恢复；若无约束解码是主因，teacher-forcing 完整 identifier 差距应明显小于自由生成 HR@1 差距。
+- 两种方法均复用各自 EXP-20260804-01、EXP-20260807-01 已冻结的同一组 10,000 条 Validation 业务键。两份方法数据的 `sample_id` 顺序 SHA256 均为 `a81c7d91f82a3e6df89002b8eb0c320625dc601e33518e1d36e869c4487c25c1`；TIGER/GNPR JSONL SHA256 分别为 `b06f4bd5cd62e12a3157e86394d1a82ce752872c34fe4b81e7c6fbe8f5282fa1`、`8a2a39c7419686e901f0e5328e6f39e09f887f136d72be7118d2e12e92381052`，差异只包含方法目标 identifier 等方法字段。
+- checkpoint 分别为 TIGER `checkpoint-16713` 和 GNPR `checkpoint-16167`，均为 epoch 3；模型权重 SHA256 分别为 `d6b228a936a2f6824708b2246618494a2a4cd578e686aeced2d73d09d194307e`、`a5fcac4d4ab46404d7eadcf55639948efc5c559a70cea2802a792eeb51323a10`。
+
+### 代码状态、配置与环境
+
+- 仓库基线提交为 `e4515195097dcb10aac0f3281ee7ddc0e482886c`；运行使用包含目录整理、`src/poi_gr/sft/teacher_forcing.py`、`scripts/sft/diagnose_sid_teacher_forcing.py` 和合成测试的未提交工作树，未创建 commit。
+- 每条样本使用与 SFT 完全一致的 Prompt 和 gold target。模型一次前向后只抽取目标位置 logits，统计每层 Top-1、Top-10、NLL，以及前三层累计全位置正确率和完整 identifier 全位置正确率；后层均条件于正确 gold 前缀，因此不受前层自由生成错误传播、Beam、Trie 或非法 ID 映射影响。
+- TIGER 目标固定为三层 SID 加 collision token；GNPR 单例为三层 SID，2,926 条碰撞样本额外包含 dedup token。结构起止 token 与 EOS 同时核验，但不纳入 semantic prefix。batch 32、cutoff 512，两次正式运行均未触发 OOM 回退。
+- 环境为本地 NVIDIA RTX A6000 48GB、Python 3.10.20、PyTorch 2.9.1+cu128、Transformers 4.52.4；TIGER/GNPR 纯前向耗时分别为 119.11/109.70 秒，峰值显存约 6.24/6.09GiB。
+
+### 命令
+
+~~~bash
+PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 python scripts/sft/diagnose_sid_teacher_forcing.py \
+  --method tiger \
+  --data-file outputs/eval/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/validation_subset_10000.jsonl \
+  --checkpoint outputs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-16713 \
+  --tokenizer models/Qwen3-0.6B-TIGER-Vocab-v1 \
+  --output-dir outputs/eval/sid_teacher_forcing_fixed10k_v1/tiger_e3 \
+  --expected-epoch 3 --batch-size 32 --checkpoint-rows 1000
+
+PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 python scripts/sft/diagnose_sid_teacher_forcing.py \
+  --method gnpr \
+  --data-file outputs/eval/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/validation_subset_10000.jsonl \
+  --checkpoint outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-16167 \
+  --tokenizer models/Qwen3-0.6B-GNPR-Vocab-v1 \
+  --output-dir outputs/eval/sid_teacher_forcing_fixed10k_v1/gnpr_e3 \
+  --expected-epoch 3 --batch-size 32 --checkpoint-rows 1000
+~~~
+
+### 核心指标
+
+| Gold-prefix 目标位置 | TIGER Top-1 | GNPR Top-1 | GNPR-TIGER | TIGER Top-10 | GNPR Top-10 | GNPR-TIGER | TIGER NLL | GNPR NLL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| SID 第 1 层 | 75.06% | 53.69% | **-21.37pp** | 96.29% | 89.14% | **-7.15pp** | 0.9027 | 1.7925 |
+| SID 第 2 层 | 81.04% | 83.43% | +2.39pp | 96.55% | 94.01% | -2.54pp | 0.7386 | 0.7773 |
+| SID 第 3 层 | 85.70% | 92.02% | +6.32pp | 96.85% | 96.66% | -0.19pp | 0.5986 | 0.4108 |
+
+| Gold-prefix 全位置同时正确 | TIGER Top-1 | GNPR Top-1 | GNPR-TIGER | TIGER Top-10 | GNPR Top-10 | GNPR-TIGER |
+|---|---:|---:|---:|---:|---:|---:|
+| 前 1 层 | 75.06% | 53.69% | -21.37pp | 96.29% | 89.14% | -7.15pp |
+| 前 2 层 | 61.75% | 49.31% | -12.44pp | 93.79% | 87.15% | -6.64pp |
+| 前 3 层 | 53.98% | 48.50% | -5.48pp | 92.15% | 86.64% | -5.51pp |
+| 完整 identifier | 50.76% | 48.40% | **-2.36pp** | 92.04% | 86.63% | **-5.41pp** |
+
+- GNPR 第一层在候选数更少（512 对 TIGER 的 1024）的情况下，Top-1 仍低 21.37 个百分点、NLL 高 0.8898；但给定正确第一层后，第二、三层 Top-1 分别高 2.39、6.32 个百分点。差距不是各层普遍退化，而是预测难度被集中到最先生成、无法由后缀纠正的根前缀。
+- GNPR 单例/碰撞组的完整 identifier Top-1 全位置正确率为 50.35%/43.68%，说明 conditional dedup 仍带来次要难度；但结构 token 基本为 100%，主要瓶颈仍在所有 10,000 条样本共有的第一层。
+- teacher-forcing 完整 identifier 的方法间 Top-1 差距为 2.36 个百分点，与无约束 Beam 自由生成 HR@1 差距 2.21 个百分点只差 0.15 个百分点。该指标不是 Beam 排名指标，数值不要求完全相等，但差距高度接近，未显示解码过程额外放大 GNPR 劣势。
+
+### 产物、结论与下一步
+
+- 正式结果位于 `outputs/eval/sid_teacher_forcing_fixed10k_v1/{tiger_e3,gnpr_e3}/result.json`，结果 SHA256 分别为 `2424c7b7a1bdbcb1bfc9ca24b55485e43770a2c99067daaf968de6cc84a022a6`、`02efc13335b42a3b6e0bde87197a523cbedaae6078a4eeb6338d447872df88f9`；两次进程退出码均为 0。2 条样本 GPU smoke 先行通过，正式结果各覆盖 10,000 条。
+- 结论：当前 GNPR 相对 TIGER 的劣势主要来自 SID 第一层不够容易由 Query/历史预测，而不是 A100 与 6000D 的训练卡差异、整体 SFT 未学会或无约束解码。该定位与既有静态审计一致：GNPR-512 的第一、二层类别纯度 44.63%/62.02%，低于 TIGER-1024 的 69.28%/77.27%。GNPR 的 base SID 唯一率更高和后层更易预测，不能抵消根前缀弱语义对自回归检索造成的损失。
+- 本实验能定位层级，但不能单独区分根因来自 content-geo 特征融合、512 容量选择还是 Diversity Loss。后续 Query-Augmented Relational SID 实验应把第一层 Query 可预测性、前缀语义纯度与最终唯一率并列作为选择标准；当前不因此重训既有 GNPR，也不提前启动 RQ-KMeans。

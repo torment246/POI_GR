@@ -1,0 +1,18 @@
+job_name: embedding_query_augmentation_bge_m3_v1
+
+input:
+  query_stats_dir: outputs/embeddings/query_augmented_bge_m3/train_query_stats_v1
+  expected_stats_manifest_sha256: 7ba75a755eef92fb3ebd93c6672642b993699f80db47630ab5efe7bddb9134b3
+  query_embeddings_dir: outputs/embeddings/query_augmented_bge_m3/train_query_embeddings_v1
+  expected_query_embeddings_sha256: e300e248a274a0febbcfb94b0b457f76916814564316029e258fd2bfe692ad67
+  poi_embedding_dir: outputs/embeddings/beijing_poi_bge_m3
+  expected_poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  expected_poi_rows: 2337178
+  expected_covered_pois: 491213
+
+output:
+  dir: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1
+  resume: false
+
+runtime:
+  read_batch_rows: 65536

@@ -44,4 +44,11 @@ venv/
 
 # Local training-platform launchers
 /run_*.sh
-/run_train_single_pos_add_distill_mlp.py
+/launchers/
+
+# Local research references and exploratory business analysis
+/papers/
+/jupyter_analysis/
+/third_party/GNPR-SID/
+/PPT/*.pdf
+/PPT/*.png

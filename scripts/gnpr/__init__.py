@@ -1,0 +1,1 @@
+"""GNPR command-line entrypoints."""

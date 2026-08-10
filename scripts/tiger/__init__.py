@@ -1,0 +1,1 @@
+"""TIGER command-line entrypoints."""

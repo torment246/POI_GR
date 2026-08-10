@@ -1,0 +1,22 @@
+experiment_id: EXP-20260808-01
+
+input:
+  aggregates_dir: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1
+  expected_aggregates_manifest_sha256: 57b21716b3c171f5b5641e1abb90d4e06217c227abb7402e2525d818d60547bd
+  category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+  category_manifest: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/manifest.json
+  expected_category_indices_sha256: 5d895b0f79192fa4d82f6f158ded85d93d24e72e2e677f26475d08978c61e7a5
+  expected_category_manifest_sha256: f47dd7c6673221140f41a83fee7e32b33381ad0169e919bc5f79cc5cef140a0e
+  expected_poi_rows: 2337178
+  expected_covered_pois: 491213
+
+residual:
+  category_count: 402
+  min_category_support: 32
+  betas: [0.10, 0.25, 0.50, 0.75]
+
+runtime:
+  chunk_rows: 8192
+
+output:
+  dir: outputs/embeddings/query_augmented_bge_m3/query_category_residual_v1

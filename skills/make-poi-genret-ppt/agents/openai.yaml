@@ -1,0 +1,4 @@
+interface:
+  display_name: "POI GenRet 汇报 PPT"
+  short_description: "按 0727/0810 模板制作项目阶段汇报 PPT"
+  default_prompt: "Use $make-poi-genret-ppt to create or update the next POI generative-retrieval progress presentation in the established 0727/0810 style."

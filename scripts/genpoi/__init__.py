@@ -1,0 +1,1 @@
+"""GenPOI command-line entrypoints."""

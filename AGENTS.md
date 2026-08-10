@@ -9,6 +9,8 @@
 ## 开始任务前
 
 - 阅读 `README.md`、`方案.md`、`docs/PROJECT_STATUS.md` 和任务相关实现。
+- 涉及本项目实验运行、服务器 GPU、训练平台、全量数据处理或评测时，必须同时阅读并遵循 `skills/poi-genret-workflow/SKILL.md`。
+- 涉及本项目阶段汇报 PPT 的创建、扩展、改版或备注时，必须同时阅读并遵循 `skills/make-poi-genret-ppt/SKILL.md`。
 - 先定位并复用现有模块，不重复实现已有功能。
 - 不为单次任务随意增加顶层目录。
 - 旧实验代码和记录已清除，除非用户明确要求，不要从 Git 历史恢复。
@@ -49,9 +51,9 @@
 ## 实验记录
 
 - `docs/EXPERIMENT_LOG.md` 只维护方法入口和正式实验索引，不堆叠完整实验详情。
-- 第一版方案的共享模型选型和完整链路实验统一记录到 `docs/experiments/V1_BASELINE.md`。
+- 第一版方案的共享模型选型和完整链路实验统一记录到 `docs/experiments/V1.md`。
 - TIGER、GNPR-SID 和 GenPOI 的输入、标识符、训练与评测分别统一记录到 `docs/experiments/TIGER.md`、`docs/experiments/GNPR_SID.md` 和 `docs/experiments/GENPOI.md`。
-- 共享的 Embedding 对照只在 V1 文档登记一次，论文方法文档引用其产物，不重复创建实验记录。
+- 原始编码器的共享选型和 E0 只在 V1 文档登记一次；Query 增强等后续向量创新统一记录到 `docs/experiments/EMBEDDING_OPTIMIZATION.md`，论文方法文档只引用其冻结产物。
 - 新方法只有在第一次正式实验开始时才创建一个方法文档；不得为单次实验创建新的 Markdown。
 - 实验编号使用 `EXP-YYYYMMDD-NN`，同一天从 `01` 递增。
 - 新实验先追加到所属方法文档，再在 `docs/EXPERIMENT_LOG.md` 增加一行索引；跨文档的实验编号不得重复。

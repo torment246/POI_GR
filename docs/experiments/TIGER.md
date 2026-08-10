@@ -37,13 +37,13 @@
 - 三组全量训练耗时分别为 708.31、714.51、715.24 秒，均以 `stop_reason=max_epochs` 正常结束。
 
 ~~~bash
-python scripts/train_rqvae.py \
-  --config configs/rqvae_tiger_bge_m3.yaml \
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_tiger_bge_m3.yaml \
   --experiment TIGER-BGE-M3-<CAPACITY>x3 \
   --no-resume \
   --no-progress
 
-python scripts/export_rqvae_sid.py \
+python scripts/sid/export_rqvae.py \
   --run-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-<CAPACITY>x3 \
   --checkpoint checkpoint_epoch_20.pt \
   --output-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-<CAPACITY>x3/evaluations/epoch_20 \
@@ -95,7 +95,7 @@ Val 码字数和 reconstruction 指标来自固定 23,372 条 validation；其�
 - 环境：`poi-gr`，Python 3.10.20、NumPy 1.26.4、PyArrow 19.0.1；最终一次全量构建耗时 52.41 秒。
 
 ~~~bash
-python scripts/build_tiger_identifiers.py \
+python scripts/tiger/build_identifiers.py \
   --sid-manifest outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/evaluations/epoch_20/sid_manifest.json \
   --output-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20 \
   --chunk-rows 100000
@@ -155,7 +155,7 @@ python scripts/build_tiger_identifiers.py \
 ### 配置、命令与环境
 
 ~~~bash
-python scripts/recover_sft_tokenized_cache.py \
+python scripts/sft/recover_tokenized_cache.py \
   --interrupted-build-dir data/sft/tokenized/.tiger_bge_m3_1024x3_history10_query_gid_v1.building-1474229 \
   --output-dir data/sft/tokenized/tiger_bge_m3_1024x3_history10_query_gid_v1 \
   --model-dir models/Qwen3-0.6B-TIGER-Vocab-v1 \
@@ -169,13 +169,13 @@ python scripts/recover_sft_tokenized_cache.py \
 
 - 四卡正式配置为全参数 BF16、packing、`cutoff_len=512`、关闭 gradient checkpointing；单卡 Batch 16、梯度累积 8、四卡全局 Batch 512，训练 3 epoch。
 - 保存与完整 Validation 均按 epoch 执行，`save_total_limit=3`；成功训练后标准 `checkpoint-<step>` 将由 `epoch_checkpoints.json` 显式对应 epoch 1/2/3。
-- 4 卡 dry-run 已通过，解析结果为 `16 × 8 × 4 = 512`、3 epoch、`save_strategy=epoch`、`eval_strategy=epoch`；`run_train_tiger_sft_4a100_3epoch.sh` 语法检查通过，正式输出目录不存在且没有同名训练进程。
+- 4 卡 dry-run 已通过，解析结果为 `16 × 8 × 4 = 512`、3 epoch、`save_strategy=epoch`、`eval_strategy=epoch`；验证时正式输出目录不存在且没有同名训练进程。
 - 环境为 Python 3.10.20、LLaMA-Factory 0.9.4、Transformers 4.52.4、PyTorch 2.9.1+cu128；实际 smoke GPU 为 NVIDIA RTX A6000 48 GB。代码基线提交为 `cd64b415f5e591fadafdfa18770fce3e8ee3a7e0`，运行使用包含 TIGER SFT 实现的未提交工作树。
 
 ### 产物、结论与下一步
 
 - 全量数据位于 `data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/`，扩词表模型位于 `models/Qwen3-0.6B-TIGER-Vocab-v1/`，正式缓存位于 `data/sft/tokenized/tiger_bge_m3_1024x3_history10_query_gid_v1/`。
-- 正式配置为 `configs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1.yaml`，平台入口为 `run_train_tiger_sft_4a100_3epoch.sh`。训练前数据、词表、Assistant-only label、实际 GPU 计算、缓存加载和四卡参数均已形成可运行闭环。
+- 正式配置为 `configs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1.yaml`。训练前数据、词表、Assistant-only label、实际 GPU 计算、缓存加载和四卡参数均已形成可运行闭环。
 - 当前结论仅为“正式训练输入已就绪”；尚无 TIGER 三轮训练 Loss、Validation 指标、checkpoint 或生成式召回结果。下一步可在四卡 A100 平台运行入口脚本，完成后先核验 epoch 1/2/3 checkpoint，再单独实现 TIGER Trie 约束评测。
 ## EXP-20260804-01（TIGER-SFT-EVAL-001）三轮正式训练与固定 10,000 条 Validation 评测
 
@@ -195,7 +195,7 @@ python scripts/recover_sft_tokenized_cache.py \
 ### 配置、命令与环境
 
 ~~~bash
-python scripts/evaluate_tiger_retrieval.py \
+python scripts/tiger/evaluate_retrieval.py \
   --valid-file data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl \
   --reference-validation-subset outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl \
   --checkpoints \

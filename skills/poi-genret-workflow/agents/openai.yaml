@@ -1,0 +1,4 @@
+interface:
+  display_name: "POI GenRet Workflow"
+  short_description: "Organize, run, verify, and document POI GenRet experiments"
+  default_prompt: "Use $poi-genret-workflow to run, verify, and document the next POI GenRet experiment safely."

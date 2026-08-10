@@ -1,0 +1,50 @@
+diff --git a/src/llamafactory/data/mm_plugin.py b/src/llamafactory/data/mm_plugin.py
+index 2ecf06a..115ca0b 100644
+--- a/src/llamafactory/data/mm_plugin.py
++++ b/src/llamafactory/data/mm_plugin.py
+@@ -25 +25,3 @@ from io import BytesIO
+-from typing import TYPE_CHECKING, BinaryIO, Literal, NotRequired, Optional, TypedDict, Union
++from typing import TYPE_CHECKING, BinaryIO, Literal, Optional, TypedDict, Union
++
++from typing_extensions import NotRequired
+diff --git a/src/llamafactory/hparams/model_args.py b/src/llamafactory/hparams/model_args.py
+index aaa8305..44b8d40 100644
+--- a/src/llamafactory/hparams/model_args.py
++++ b/src/llamafactory/hparams/model_args.py
+@@ -20 +20,3 @@ from dataclasses import asdict, dataclass, field, fields
+-from typing import Any, Literal, Self
++from typing import Any, Literal
++
++from typing_extensions import Self
+diff --git a/src/llamafactory/train/sft/workflow.py b/src/llamafactory/train/sft/workflow.py
+index 1bf14f1..4de5427 100644
+--- a/src/llamafactory/train/sft/workflow.py
++++ b/src/llamafactory/train/sft/workflow.py
+@@ -159 +159,5 @@ def run_sft(
+-    if training_args.do_eval:
++    final_step_already_evaluated = training_args.do_train and any(
++        log.get("step") == trainer.state.global_step and "eval_loss" in log
++        for log in trainer.state.log_history
++    )
++    if training_args.do_eval and not final_step_already_evaluated:
+@@ -162,0 +167,2 @@ def run_sft(
++    elif final_step_already_evaluated:
++        logger.info_rank0("Skipping duplicate final evaluation; the final training step was already evaluated.")
+diff --git a/src/llamafactory/v1/plugins/data_plugins/converter.py b/src/llamafactory/v1/plugins/data_plugins/converter.py
+index 07aae2d..b577897 100644
+--- a/src/llamafactory/v1/plugins/data_plugins/converter.py
++++ b/src/llamafactory/v1/plugins/data_plugins/converter.py
+@@ -16 +16,3 @@
+-from typing import Any, Literal, NotRequired, TypedDict
++from typing import Any, Literal, TypedDict
++
++from typing_extensions import NotRequired
+diff --git a/src/llamafactory/v1/utils/types.py b/src/llamafactory/v1/utils/types.py
+index bae334f..5d18996 100644
+--- a/src/llamafactory/v1/utils/types.py
++++ b/src/llamafactory/v1/utils/types.py
+@@ -15 +15,3 @@
+-from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, Union
++from typing import TYPE_CHECKING, Literal, TypedDict, Union
++
++from typing_extensions import NotRequired

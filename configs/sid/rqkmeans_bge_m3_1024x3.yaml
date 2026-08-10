@@ -1,0 +1,48 @@
+experiment_id: RQKMEANS-BGE-M3-1024x3
+
+data:
+  embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  embedding_manifest: outputs/embeddings/beijing_poi_bge_m3/manifest.json
+  poi_data: data/beijing_poi_clean_20260715_json
+  input_dim: 1024
+
+quantizer:
+  codebook_sizes: [1024, 1024, 1024]
+  implementation: sequential_kmeans
+  backend: faiss_gpu
+  sample_size: 500000
+  iterations: 20
+  nredo: 3
+  max_points_per_centroid: 2048
+  max_beam_size: 1
+  progressive_dim: true
+  refine_codebook: false
+  codebook_refine_iterations: 5
+  use_beam_lut: true
+  max_memory_mib: 4096
+  omp_threads: 64
+  seed: 42
+  validation_ratio: 0.01
+
+runtime:
+  chunk_rows: 8192
+  sample_chunk_rows: 8192
+  sample_storage: memory
+  gpu_temp_memory_mib: 512
+  finite_check_chunk_rows: 8192
+  resume: true
+  show_progress: true
+
+evaluation:
+  max_cases: 20
+  max_pois_per_case: 20
+
+expected:
+  rows: 2337178
+  embedding_fingerprint: d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071
+  poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  validation_indices_sha256: 409e476abf82cd609447c6c9a6f437d96ecd897a40c5e610a33a3bc996041249
+  sample_indices_sha256: 0f7f22d7a7543965d581bcc9098a833533dbbdbb701b867f54c76d0bf66d6eb7
+
+output_dir: outputs/sid/rqkmeans/bge_m3/FAISS-RQ-BGE-M3-1024x3
