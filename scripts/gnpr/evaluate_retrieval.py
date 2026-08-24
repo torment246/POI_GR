@@ -52,12 +52,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--valid-file", type=Path, required=True)
     parser.add_argument("--reference-validation-subset", type=Path, required=True)
-    parser.add_argument("--checkpoints", type=Path, nargs=3, required=True)
-    parser.add_argument("--expected-checkpoint-steps", type=int, nargs=3, required=True)
+    parser.add_argument("--checkpoints", type=Path, nargs="+", required=True)
+    parser.add_argument("--expected-checkpoint-steps", type=int, nargs="+", required=True)
     parser.add_argument(
         "--expected-checkpoint-epochs",
         type=float,
-        nargs=3,
+        nargs="+",
         default=(1, 2, 3),
     )
     parser.add_argument("--tokenizer", type=Path, required=True)
@@ -71,13 +71,18 @@ def parse_args() -> argparse.Namespace:
         default=16,
     )
     parser.add_argument("--chunk-size", type=int, default=1000)
-    parser.add_argument("--cutoff-len", type=int, default=512)
+    parser.add_argument("--cutoff-len", type=int, default=1024)
     parser.add_argument("--smoke-limit", type=int)
     parser.add_argument("--skip-data-hash", action="store_true")
     parser.add_argument(
         "--preflight-only",
         action="store_true",
         help="只核验固定子集、Tokenizer、identifier、checkpoint 和 Prompt，不加载模型。",
+    )
+    parser.add_argument(
+        "--final-checkpoint-only",
+        action="store_true",
+        help="专项诊断只评测一个已冻结的最终 checkpoint；默认仍要求三轮。",
     )
     return parser.parse_args()
 
@@ -106,6 +111,11 @@ def validate_checkpoints(
     tokenizer_path: Path,
 ) -> list[dict[str, Any]]:
     """Validate checkpoint order, tokenizer identity and Validation losses."""
+
+    if not checkpoints or len(checkpoints) != len(expected_steps):
+        raise GnprEvalError("Checkpoint 数量必须与 expected steps 一致且非空")
+    if len(expected_epochs) != len(expected_steps):
+        raise GnprEvalError("expected epochs 数量必须与 expected steps 一致")
 
     mapping_payload = load_json(
         tokenizer_path / "poi_token_mapping.json",
@@ -526,6 +536,11 @@ def write_results_csv(path: Path, results: Sequence[Mapping[str, Any]]) -> None:
 def main() -> int:
     args = parse_args()
     try:
+        expected_checkpoint_count = 1 if args.final_checkpoint_only else 3
+        if len(args.checkpoints) != expected_checkpoint_count:
+            raise GnprEvalError(
+                "--final-checkpoint-only 需要 1 个 checkpoint；默认正式对比需要 3 个"
+            )
         if args.num_beams != 10:
             raise GnprEvalError("固定一万条 checkpoint 对比的 Beam 必须为 10")
         if args.chunk_size <= 0:

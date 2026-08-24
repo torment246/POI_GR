@@ -51,6 +51,7 @@ class ModelConfig:
     normalize_embeddings: bool
     truncate_dim: int | None
     prompt_name: str | None
+    backend: str = "sentence_transformers"
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ def load_job_config(config_path: Path, project_root: Path) -> EmbeddingJobConfig
         normalize_embeddings=bool(model_raw.get("normalize_embeddings", True)),
         truncate_dim=_optional_positive_int(model_raw.get("truncate_dim"), "model.truncate_dim"),
         prompt_name=model_raw.get("prompt_name"),
+        backend=str(model_raw.get("backend", "sentence_transformers")),
     )
     output = OutputConfig(
         dir=_resolve_path(output_raw.get("dir"), project_root, "output.dir"),
@@ -180,6 +182,12 @@ def _validate_config(data: DataConfig, model: ModelConfig, output: OutputConfig)
         raise ConfigError("model.encode_buffer_size 不能小于 model.batch_size")
     if model.torch_dtype not in {"float16", "bfloat16", "float32"}:
         raise ConfigError("model.torch_dtype 只能是 float16、bfloat16 或 float32")
+    if model.backend not in {"sentence_transformers", "mmbert_recall"}:
+        raise ConfigError(
+            "model.backend 只能是 sentence_transformers 或 mmbert_recall"
+        )
+    if model.backend == "mmbert_recall" and model.truncate_dim is not None:
+        raise ConfigError("mmbert_recall 使用固定 128 维 projection，禁止 truncate_dim")
     if output.embedding_dtype not in {"float16", "float32"}:
         raise ConfigError("output.embedding_dtype 只能是 float16 或 float32")
 
@@ -400,7 +408,6 @@ def _package_version(name: str) -> str | None:
 
 def _load_encoder(config: ModelConfig) -> tuple[TextEncoder, str, float]:
     import torch
-    from sentence_transformers import SentenceTransformer
 
     if not config.path.is_dir():
         raise ConfigError(f"模型目录不存在：{config.path}")
@@ -421,6 +428,21 @@ def _load_encoder(config: ModelConfig) -> tuple[TextEncoder, str, float]:
         model_kwargs["attn_implementation"] = config.attention
 
     started = time.perf_counter()
+    if config.backend == "mmbert_recall":
+        from .mmbert_recall import load_mmbert_recall_encoder
+
+        model = load_mmbert_recall_encoder(
+            model_path=config.path,
+            device=device,
+            max_seq_length=config.max_seq_length,
+            torch_dtype=dtype_map[config.torch_dtype],
+            attention=config.attention,
+            padding_side=config.padding_side,
+        )
+        return model, device, time.perf_counter() - started
+
+    from sentence_transformers import SentenceTransformer
+
     model = SentenceTransformer(
         str(config.path),
         device=device,
@@ -439,11 +461,14 @@ def _job_signature(
     prepared: PreparedInput,
     embedding_dim: int,
 ) -> str:
+    model_payload = asdict(config.model)
+    if config.model.backend == "sentence_transformers":
+        model_payload.pop("backend")
     payload = {
         "input_fingerprint": prepared.fingerprint,
         "total_rows": prepared.total_rows,
         "model": {
-            **asdict(config.model),
+            **model_payload,
             "path": str(config.model.path),
         },
         "output_dtype": config.output.embedding_dtype,
@@ -703,6 +728,7 @@ def run_embedding_job(
             "normalize_embeddings": config.model.normalize_embeddings,
             "truncate_dim": config.model.truncate_dim,
             "prompt_name": config.model.prompt_name,
+            "backend": config.model.backend,
             "embedding_dim": embedding_dim,
         },
         "output": {

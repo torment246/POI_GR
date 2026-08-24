@@ -22,6 +22,7 @@ from .evaluation import (
     compute_basic_metrics,
     compute_layer_metrics,
     evaluate_sid,
+    load_aligned_category_codes,
     write_evaluation_outputs,
 )
 from .training import create_fixed_indices
@@ -42,6 +43,7 @@ class RQKMeansConfig:
     output_dir: Path
     input_dim: int
     codebook_sizes: tuple[int, ...]
+    first_level_mode: str
     implementation: str
     backend: str
     sample_size: int
@@ -71,6 +73,7 @@ class RQKMeansConfig:
     expected_poi_ids_sha256: str | None
     expected_validation_indices_sha256: str | None
     expected_sample_indices_sha256: str | None
+    expected_category_count: int | None
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
@@ -165,6 +168,18 @@ def load_rqkmeans_config(
         or not 0.0 < float(validation_ratio) < 1.0
     ):
         raise RQKMeansError("quantizer.validation_ratio 必须位于 (0, 1)")
+    first_level_mode = str(quantizer.get("first_level_mode", "kmeans"))
+    if first_level_mode not in {"kmeans", "category_code"}:
+        raise RQKMeansError(
+            "quantizer.first_level_mode 必须是 kmeans/category_code"
+        )
+    if (
+        first_level_mode == "category_code"
+        and declared_implementation != "sequential_kmeans"
+    ):
+        raise RQKMeansError(
+            "category_code 第一层只支持 sequential_kmeans"
+        )
     resolved_output = (
         output_dir.resolve()
         if output_dir is not None
@@ -182,6 +197,7 @@ def load_rqkmeans_config(
         output_dir=resolved_output,
         input_dim=_positive_int(data.get("input_dim"), "data.input_dim"),
         codebook_sizes=sizes,
+        first_level_mode=first_level_mode,
         implementation=declared_implementation,
         backend=declared_backend,
         sample_size=_positive_int(quantizer.get("sample_size"), "quantizer.sample_size"),
@@ -247,6 +263,9 @@ def load_rqkmeans_config(
             expected.get("sample_indices_sha256"),
             "expected.sample_indices_sha256",
         ),
+        expected_category_count=_optional_positive_int(
+            expected.get("category_count"), "expected.category_count"
+        ),
     )
     if config.sample_storage not in {"memory", "mmap"}:
         raise RQKMeansError("runtime.sample_storage 必须是 memory/mmap")
@@ -259,6 +278,13 @@ def load_rqkmeans_config(
     )
     resolved_implementation = implementation or config.implementation
     resolved_backend = backend or config.backend
+    if (
+        config.first_level_mode == "category_code"
+        and resolved_implementation != "sequential_kmeans"
+    ):
+        raise RQKMeansError(
+            "category_code 第一层只支持 sequential_kmeans"
+        )
     if resolved_implementation == "faiss_residual_quantizer":
         if resolved_backend != "faiss_cpu":
             raise RQKMeansError(
@@ -818,6 +844,10 @@ def _train_codebooks(
     sample_indices: np.ndarray,
     resolved: dict[str, Any],
     resolved_path: Path,
+    *,
+    category_ids: np.ndarray | None = None,
+    category_codes: Sequence[str] | None = None,
+    validation_mask: np.ndarray | None = None,
 ) -> list[np.ndarray]:
     work_dir = config.output_dir / ".work"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -862,6 +892,90 @@ def _train_codebooks(
         if codebook.shape != expected_shape or codebook.dtype != np.float32:
             raise RQKMeansError(f"第 {level + 1} 层现有码本 shape/dtype 无效")
         codebooks.append(codebook)
+
+    if config.first_level_mode == "category_code" and completed_levels == 0:
+        if category_ids is None or category_codes is None or validation_mask is None:
+            raise RQKMeansError("category_code 第一层缺少对齐类别或训练划分")
+        if len(category_codes) != config.codebook_sizes[0]:
+            raise RQKMeansError("category_code 数量与第一层码本不一致")
+        started = time.perf_counter()
+        category_sums = np.zeros(
+            (len(category_codes), config.input_dim), dtype=np.float64
+        )
+        category_counts = np.zeros(len(category_codes), dtype=np.int64)
+        for start in tqdm(
+            range(0, len(embeddings), config.chunk_rows),
+            desc="Build category centroids",
+            unit="poi",
+            disable=not config.show_progress,
+        ):
+            stop = min(start + config.chunk_rows, len(embeddings))
+            train_rows = ~validation_mask[start:stop]
+            if not np.any(train_rows):
+                continue
+            labels = np.asarray(category_ids[start:stop], dtype=np.int32)[train_rows]
+            values = np.asarray(embeddings[start:stop], dtype=np.float32)[train_rows]
+            for label in np.unique(labels):
+                selected = labels == label
+                category_sums[label] += values[selected].sum(axis=0, dtype=np.float64)
+                category_counts[label] += int(np.count_nonzero(selected))
+        if np.any(category_counts == 0):
+            missing = np.flatnonzero(category_counts == 0).tolist()
+            raise RQKMeansError(f"训练划分中存在空 category_code：{missing[:20]}")
+        centroids = np.asarray(
+            category_sums / category_counts[:, None], dtype=np.float32
+        )
+        labels = np.asarray(category_ids[sample_indices], dtype=np.int32)
+        sample_codes[:, 0] = labels
+        if config.sample_storage == "memory":
+            _npy_atomic(sample_codes_path, sample_codes)
+        else:
+            sample_codes.flush()
+        squared_l2 = 0.0
+        for start in range(0, len(sample_indices), config.sample_chunk_rows):
+            stop = min(start + config.sample_chunk_rows, len(sample_indices))
+            values = np.asarray(
+                embeddings[sample_indices[start:stop]], dtype=np.float32
+            )
+            block_labels = labels[start:stop]
+            residual = values - centroids[block_labels]
+            squared_l2 += float(np.sum(residual * residual, dtype=np.float64))
+        codebook_path = config.output_dir / "codebook_level_1.npy"
+        codebook_sha256 = _npy_atomic_with_sha256(codebook_path, centroids)
+        counts_path = config.output_dir / "category_training_counts.npy"
+        counts_sha256 = _npy_atomic_with_sha256(counts_path, category_counts)
+        level_metrics = {
+            "level": 1,
+            "codebook_size": len(category_codes),
+            "assignment": "category_code",
+            "centroid_source": "all_non_validation_pois",
+            "used_codes_on_sample": int(np.unique(labels).size),
+            "dead_codes_on_sample": int(len(category_codes) - np.unique(labels).size),
+            "used_codes_on_train": int(np.count_nonzero(category_counts)),
+            "dead_codes_on_train": int(np.count_nonzero(category_counts == 0)),
+            "mean_squared_l2_residual_on_sample": squared_l2 / len(sample_indices),
+            "seconds": time.perf_counter() - started,
+            "codebook_path": codebook_path.name,
+            "codebook_sha256": codebook_sha256,
+            "category_training_counts_path": counts_path.name,
+            "category_training_counts_sha256": counts_sha256,
+        }
+        codebooks.append(centroids)
+        resolved["quantizer"]["levels"].append(level_metrics)
+        resolved["status"] = "training_codebooks"
+        _json_atomic(resolved_path, resolved)
+        print(
+            json.dumps({"rqkmeans_level": level_metrics}, ensure_ascii=False),
+            flush=True,
+        )
+        completed_levels = 1
+
+    if config.first_level_mode == "category_code" and completed_levels > 0:
+        if category_ids is None:
+            raise RQKMeansError("category_code 第一层缺少对齐类别")
+        expected_labels = np.asarray(category_ids[sample_indices], dtype=np.int32)
+        if not np.array_equal(np.asarray(sample_codes[:, 0]), expected_labels):
+            raise RQKMeansError("现有第一层 sample code 与 category_code 不一致")
 
     if completed_levels == len(config.codebook_sizes):
         del sample_codes
@@ -947,6 +1061,7 @@ def _encode_full_sid(
     embeddings: np.ndarray,
     codebooks: Sequence[np.ndarray],
     faiss_residual_index: Any | None = None,
+    category_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
     sid_path = config.output_dir / "sid_codes.npy"
     codes = np.empty(
@@ -976,7 +1091,13 @@ def _encode_full_sid(
                 else None
             )
             for level, centroids in enumerate(codebooks):
-                if joint_codes is None:
+                if level == 0 and config.first_level_mode == "category_code":
+                    if category_ids is None:
+                        raise RQKMeansError("全量编码缺少 category_code 对齐数组")
+                    labels = np.asarray(
+                        category_ids[start:stop], dtype=np.int32
+                    )
+                elif joint_codes is None:
                     index = None if indices is None else indices[level]
                     labels = _assign_codes(residual, centroids, index)
                 else:
@@ -1031,6 +1152,7 @@ def _screen_on_validation(
     validation_indices: np.ndarray,
     codebooks: Sequence[np.ndarray],
     faiss_residual_index: Any | None,
+    category_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if faiss_residual_index is None:
         assignment_indices, resources = _build_assignment_indices(codebooks, config)
@@ -1055,7 +1177,14 @@ def _screen_on_validation(
                 else None
             )
             for level, centroids in enumerate(codebooks):
-                if joint_codes is None:
+                if level == 0 and config.first_level_mode == "category_code":
+                    if category_ids is None:
+                        raise RQKMeansError("Validation 编码缺少 category_code 对齐数组")
+                    labels = np.asarray(
+                        category_ids[validation_indices[start:stop]],
+                        dtype=np.int32,
+                    )
+                elif joint_codes is None:
                     index = (
                         None
                         if assignment_indices is None
@@ -1144,7 +1273,7 @@ def run_rqkmeans(
             raise RQKMeansError("配置要求 faiss_gpu，但当前进程未检测到 GPU")
 
     embeddings, input_validation = validate_rqkmeans_inputs(config)
-    _, validation_indices, sample_indices, split = create_fixed_indices(
+    validation_mask, validation_indices, sample_indices, split = create_fixed_indices(
         len(embeddings),
         config.validation_ratio,
         config.sample_size,
@@ -1162,6 +1291,36 @@ def run_rqkmeans(
         and sample_sha != config.expected_sample_indices_sha256
     ):
         raise RQKMeansError("KMeans 采样索引 SHA256 与 TIGER 冻结采样不一致")
+    category_ids: np.ndarray | None = None
+    category_codes: tuple[str, ...] | None = None
+    if config.first_level_mode == "category_code":
+        category_ids, category_codes = load_aligned_category_codes(
+            config.poi_data_path,
+            config.poi_ids_path,
+            len(embeddings),
+        )
+        if np.any(category_ids < 0):
+            raise RQKMeansError("category_code 第一层不允许缺失类别")
+        if len(category_codes) != config.codebook_sizes[0]:
+            raise RQKMeansError(
+                f"第一层码本 {config.codebook_sizes[0]} != 实际 category_code "
+                f"数量 {len(category_codes)}"
+            )
+        if (
+            config.expected_category_count is not None
+            and len(category_codes) != config.expected_category_count
+        ):
+            raise RQKMeansError(
+                "实际 category_code 数量与 expected.category_count 不一致"
+            )
+        input_validation["category_first_level"] = {
+            "field": "category_code",
+            "category_count": len(category_codes),
+            "missing_rows": 0,
+            "assignment_sha256": hashlib.sha256(
+                np.ascontiguousarray(category_ids).tobytes()
+            ).hexdigest(),
+        }
     split["comparison_role"] = "same_indices_as_tiger_rqvae"
     if validate_only:
         return {
@@ -1199,11 +1358,17 @@ def run_rqkmeans(
                 config.codebook_sizes == (1024, 1024, 1024)
             ),
             "same_kmeans_iterations": config.iterations == 20,
+            "first_level_mode": config.first_level_mode,
+            "first_level_supervised": config.first_level_mode == "category_code",
             "direct_input_dimension": config.input_dim,
             "latent_projection": None,
         },
         "quantizer": {
-            "method": "residual_kmeans",
+            "method": (
+                "category_residual_kmeans"
+                if config.first_level_mode == "category_code"
+                else "residual_kmeans"
+            ),
             "implementation": config.implementation,
             "backend": config.backend,
             "levels": [],
@@ -1216,13 +1381,57 @@ def run_rqkmeans(
         "started_at": _utc_now(),
     }
     _json_atomic(resolved_path, resolved)
+    if category_ids is not None and category_codes is not None:
+        category_ids_path = config.output_dir / "category_ids.npy"
+        if category_ids_path.is_file():
+            persisted_category_ids = np.load(
+                category_ids_path, mmap_mode="r", allow_pickle=False
+            )
+            if not np.array_equal(persisted_category_ids, category_ids):
+                raise RQKMeansError(
+                    "现有 category_ids.npy 与当前 category_code 对齐不一致"
+                )
+            category_ids_sha256 = _sha256_file(category_ids_path)
+        else:
+            category_ids_sha256 = _npy_atomic_with_sha256(
+                category_ids_path, category_ids
+            )
+        category_vocab_path = config.output_dir / "category_vocab.json"
+        _json_atomic(
+            category_vocab_path,
+            {
+                "schema_version": "category-first-level-v1",
+                "field": "category_code",
+                "category_count": len(category_codes),
+                "category_codes": list(category_codes),
+                "category_ids_path": category_ids_path.name,
+                "category_ids_sha256": category_ids_sha256,
+                "assignment": "one_category_code_one_s1_token",
+            },
+        )
+        resolved["category_first_level"] = {
+            "field": "category_code",
+            "category_count": len(category_codes),
+            "category_ids_path": category_ids_path.name,
+            "category_ids_sha256": category_ids_sha256,
+            "category_vocab_path": category_vocab_path.name,
+            "category_vocab_sha256": _sha256_file(category_vocab_path),
+        }
+        _json_atomic(resolved_path, resolved)
     if config.implementation == "faiss_residual_quantizer":
         codebooks, faiss_residual_index = _train_faiss_residual_quantizer(
             config, embeddings, sample_indices, resolved, resolved_path
         )
     else:
         codebooks = _train_codebooks(
-            config, embeddings, sample_indices, resolved, resolved_path
+            config,
+            embeddings,
+            sample_indices,
+            resolved,
+            resolved_path,
+            category_ids=category_ids,
+            category_codes=category_codes,
+            validation_mask=validation_mask,
         )
         faiss_residual_index = None
     if "screen_metrics" not in resolved:
@@ -1232,6 +1441,7 @@ def run_rqkmeans(
             validation_indices,
             codebooks,
             faiss_residual_index,
+            category_ids,
         )
         _json_atomic(config.output_dir / "screen_metrics.json", screen_metrics)
         resolved["screen_metrics"] = screen_metrics
@@ -1244,7 +1454,11 @@ def run_rqkmeans(
     sid_path = config.output_dir / "sid_codes.npy"
     if "full_quantization" not in resolved:
         resolved["full_quantization"] = _encode_full_sid(
-            config, embeddings, codebooks, faiss_residual_index
+            config,
+            embeddings,
+            codebooks,
+            faiss_residual_index,
+            category_ids,
         )
         _json_atomic(resolved_path, resolved)
     elif not sid_path.is_file():
@@ -1253,7 +1467,11 @@ def run_rqkmeans(
     manifest = {
         "schema_version": "sid-input-v1",
         "experiment_id": config.experiment_id,
-        "method": "residual_kmeans",
+        "method": (
+            "category_residual_kmeans"
+            if config.first_level_mode == "category_code"
+            else "residual_kmeans"
+        ),
         "embedding": {
             "manifest": os.path.relpath(
                 config.embedding_manifest_path, config.output_dir
@@ -1292,6 +1510,15 @@ def run_rqkmeans(
         "sample_indices_sha256": sample_sha,
         "exported_at": _utc_now(),
     }
+    if category_ids is not None:
+        category_metadata = resolved.get("category_first_level")
+        if not isinstance(category_metadata, dict):
+            raise RQKMeansError("resolved config 缺少 category-first 元数据")
+        manifest["first_level"] = {
+            "mode": "category_code",
+            **category_metadata,
+            "exact_assignment": True,
+        }
     manifest_path = config.output_dir / "sid_manifest.json"
     _json_atomic(manifest_path, manifest)
     resolved["status"] = "evaluating"
@@ -1304,6 +1531,28 @@ def run_rqkmeans(
     )
     metrics["quantization"] = resolved["full_quantization"]
     metrics["comparison_protocol"] = resolved["comparison_protocol"]
+    if category_ids is not None:
+        exported_codes = np.load(sid_path, mmap_mode="r", allow_pickle=False)
+        exact_assignment = True
+        for start in range(0, len(category_ids), config.chunk_rows):
+            stop = min(start + config.chunk_rows, len(category_ids))
+            if not np.array_equal(
+                exported_codes[start:stop, 0], category_ids[start:stop]
+            ):
+                exact_assignment = False
+                break
+        first_purity = metrics["prefixes"][0]["category_purity"]
+        if (
+            not exact_assignment
+            or first_purity["micro_purity"] != 1.0
+            or first_purity["macro_purity"] != 1.0
+        ):
+            raise RQKMeansError(
+                "category_code 第一层未通过精确赋值或 100% purity 校验"
+            )
+        metrics["validation"]["category_first_level_exact_assignment"] = True
+        metrics["validation"]["category_first_level_micro_purity"] = 1.0
+        metrics["validation"]["category_first_level_macro_purity"] = 1.0
     write_evaluation_outputs(config.output_dir, metrics, cases)
     resolved.update(
         {

@@ -10,7 +10,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -24,6 +24,20 @@ IGNORE_INDEX = -100
 
 class TokenizationPreflightError(ValueError):
     pass
+
+
+def enforce_safe_cutoff_contract(
+    stats: dict[str, Any], requested_cutoff: int
+) -> None:
+    """Forbid tokenizer-side source truncation for the new 1024-token protocol."""
+
+    over_cutoff = int(stats.get("over_requested_cutoff_count", 0))
+    if requested_cutoff >= 1024 and over_cutoff:
+        raise TokenizationPreflightError(
+            f"仍有 {over_cutoff} 条样本超过 cutoff_len={requested_cutoff}；"
+            "拒绝构建会静默截断 CURRENT/当前 Query 的缓存。请先运行 "
+            "scripts/sft/build_history_safe_data.py，只删除最早历史后再重新预检"
+        )
 
 
 class LengthHistogram:
@@ -721,6 +735,7 @@ def validate_sft_tokenization(
         )
         os.replace(temporary_preflight, preflight_path)
         print(f"长度预检状态已保存：{preflight_path}", flush=True)
+    enforce_safe_cutoff_contract(stats, requested_cutoff)
     effective_cutoff = int(stats["effective_cutoff_len"])
     cache_manifest = build_tokenized_cache(
         model_dir=model_dir,
@@ -758,7 +773,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("configs/sft"),
         help="包含 dataset_info.json 的 LLaMA-Factory 数据注册目录",
     )
-    parser.add_argument("--cutoff-len", type=int, default=128, help="首选截断长度")
+    parser.add_argument(
+        "--cutoff-len",
+        type=int,
+        default=1024,
+        help="整条 Source+Target 的 Token 上限，后续实验默认 1024",
+    )
     parser.add_argument("--batch-size", type=int, default=4096, help="长度统计批大小")
     parser.add_argument("--workers", type=int, default=16, help="缓存预处理进程数")
     parser.add_argument(
@@ -799,8 +819,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.cutoff_len not in (128, 256, 512):
-        raise SystemExit("--cutoff-len 只允许 128、256 或 512")
+    if args.cutoff_len not in (128, 256, 512, 1024):
+        raise SystemExit("--cutoff-len 只允许 128、256、512 或 1024")
     if args.smoke_train_rows <= 0 or args.smoke_valid_rows <= 0:
         raise SystemExit("smoke 行数必须大于 0")
     stats, cache_manifest = validate_sft_tokenization(

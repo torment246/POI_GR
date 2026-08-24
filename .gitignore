@@ -49,6 +49,7 @@ venv/
 # Local research references and exploratory business analysis
 /papers/
 /jupyter_analysis/
+/poi_search/
 /third_party/GNPR-SID/
 /PPT/*.pdf
 /PPT/*.png

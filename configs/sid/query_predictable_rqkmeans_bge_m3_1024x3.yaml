@@ -1,0 +1,32 @@
+experiment_id: QD-RQ-R3-BGE-E4Q-1024x3-S100K
+
+data:
+  content_embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  fused_embeddings: outputs/embeddings/query_augmented_bge_m3/e4_alpha0p30_beta0p85_full_v1/embeddings.npy
+  query_aggregates: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1/e2_query_weighted.npy
+  covered_poi_rows: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1/covered_poi_rows.npy
+  category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+  category_means: outputs/embeddings/query_augmented_bge_m3/query_category_residual_boundary_v1/category_query_means.npy
+  beta: 0.85
+  fusion_alpha: 0.30
+
+initialization:
+  reference_dir: outputs/sid/rqkmeans/bge_m3/screen/gpu_greedy_1024x3_s100k_i20_r1
+  sample_cache_dir: outputs/sid/query_predictable_rqkmeans/cache/bge_e4q_s100k_v1
+
+quantizer:
+  codebook_sizes: [1024, 1024, 1024]
+  query_weights: [0.0, 0.25, 0.75]
+  iterations: 10
+  content_top_t: null
+
+runtime:
+  chunk_rows: 2048
+  scan_chunk_rows: 32768
+
+expected:
+  rows: 2337178
+  dimension: 1024
+  sample_indices_sha256: 2ff976ba4c216782fb79027fd5dae95e9fb23b5d0a93885345e18d3c62126afe
+
+output_dir: outputs/sid/query_predictable_rqkmeans/r3_bge_e4q/screen/lambda_0_0p25_0p75_s100k_i10

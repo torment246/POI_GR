@@ -225,7 +225,7 @@ bash launchers/run_encode_train_queries_bge_m3_1a100.sh
 
 ### 第四步：冻结最佳 Embedding
 
-冻结最佳方法的配置、全量 POI 向量和指纹后，再比较 RQ-KMeans、现有 RQ-VAE 与必要的 balance/OPQ 消融。原始 BGE 与 E4 输入上的 RQ-VAE/RQ-KMeans 对称 `1024³` `2×2`、三种 RQ-KMeans 30-bit 布局均已完成，结果记录在 [RQ-KMeans SID 实验](RQKMEANS.md)。E4 `2048×1024×512` 已冻结为 SFT 主模型，E4 `4096×1024×256` 为容量上界，BGE `2048×1024×512` 为同布局 Embedding 消融。量化器和碰撞后缀属于下一阶段 SID 方法实验，不把其结果混入本文件的向量召回结论。
+冻结最佳方法的配置、全量 POI 向量和指纹后，再比较 RQ-KMeans、现有 RQ-VAE 与必要的 balance/OPQ 消融。原始 BGE 与 E4 输入上的 RQ-VAE/RQ-KMeans 对称 `1024³` `2×2`、E4 五档 RQ-KMeans 30-bit 容量方向均已完成，结果记录在 [RQ-KMeans SID 实验](RQKMEANS.md)。首轮 SFT 使用 E4 后移-512、对称-1024、前移-2048确定容量方向；原始 BGE 消融顺延到胜出布局，避免同时改变 Embedding 和码本分配。量化器和碰撞后缀属于下一阶段 SID 方法实验，不把其结果混入本文件的向量召回结论。
 
 ## 7. 正式实验记录
 

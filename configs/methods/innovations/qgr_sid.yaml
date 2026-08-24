@@ -1,0 +1,56 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: qgr_sid
+  group: innovation
+  display_name: QGR-SID 纯离散变长关系标识
+  status: partial
+  summary: 固定 TIGER 三层语义 SID，只在碰撞 POI 后追加可由稳定属性抽取、由 Train Query/GID 选择的最短关系类型与数字值对。
+  paper: null
+
+task:
+  type: map_search_adapted_sequential_poi_generation
+  target_fields: [query, user_lng, user_lat, poi_id, event_time]
+  history_fields: [query, user_lng, user_lat, poi_id, event_time]
+  max_history_events: 10
+
+identifier:
+  type: tiger_base_sid_with_variable_numeric_relations
+  token_order: [s1, s2, s3, variable_relation_type_value_pairs]
+  base_sid: TIGER-BGE-M3-1024x3-epoch20
+  max_relation_pairs: 3
+  numeric_value_range: [0, 1055]
+  request_dependent_identifier: false
+
+pipeline:
+  data:
+    status: partial
+    notes: M2-A-D 离线门禁已完成；可靠词法正向但 92.77% early 请求仍需 fallback，未过预注册门禁，停止最终映射、Tokenizer、Trie 和 SFT Messages。
+    commands: []
+  identifier:
+    status: partial
+    notes: 已实现纯数值关系、真实 Train 90/10 局部树、GEO/GID、early-only Query residual 与可靠词法代理；M2-D 未过 95% 收益保留门槛，identifier 阶段停止在离线证据。
+    commands:
+      - entrypoint: scripts/qgr_sid/audit_relations.py
+        config: null
+        purpose: 严格对齐 POI 与 TIGER mapping，审计词法数值关系、冲突、数值越界和 Train Query 加权覆盖。
+      - entrypoint: scripts/qgr_sid/evaluate_relation_proxy.py
+        config: null
+        purpose: 用真实 Train 时间前 90% 编译纯词法变长关系树，仅在后 10% 已知 TIGER gold bucket 上评测 popularity、静态树和 Query 引导树。
+      - entrypoint: scripts/qgr_sid/evaluate_geo_proxy.py
+        config: null
+        purpose: 复用同一 90/10 切分，比较 GEO-only、纯词法和词法+GEO；结果证明精确请求 GID 分支负向，不进入第一版目标 SID。
+      - entrypoint: scripts/qgr_sid/evaluate_embedding_proxy.py
+        config: null
+        purpose: 从 full Train Query 统计精确扣除 holdout，评测 early-only POI Query center、桶内 residual 和词法优先融合；结果显著负向，不进入第一版 SID。
+      - entrypoint: scripts/qgr_sid/evaluate_reliable_proxy.py
+        config: null
+        purpose: 单次评测 early 支持≥10k、值匹配率≥15%的六类可靠关系与 TIGER fallback；结果正向但未保留 full lexical 95% 收益，停止下游。
+  train:
+    status: missing
+    notes: M2-D 未通过预注册门禁；不构建 SFT 数据、不扩词表、不启动昂贵训练。
+    commands: []
+  evaluate:
+    status: missing
+    notes: 最终复用冻结 TIGER Validation 10k 与 Beam=10 口径，当前尚无可评测 checkpoint。
+    commands: []

@@ -43,6 +43,11 @@ class EmbeddingRetrievalMetricsTest(unittest.TestCase):
         Pooling.pooling_mode_lasttoken = False
         self.assertEqual(_pooling_description([Pooling()]), "cls")
 
+        explicit = type(
+            "ExplicitPooling", (), {"pooling_description": "mean+projection"}
+        )()
+        self.assertEqual(_pooling_description(explicit), "mean+projection")
+
     def test_metrics_and_query_length_buckets(self) -> None:
         records = [
             {"query": "北", "poi_id": "p0"},

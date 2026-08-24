@@ -40,6 +40,24 @@ class SftTrainingConfigTest(unittest.TestCase):
                 "gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_valid",
                 "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_train",
                 "genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_valid",
+                "rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1_train",
+                "rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1_valid",
+                "rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_train",
+                "rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_valid",
+                "rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_train",
+                "rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_valid",
+                "ghr_exp09_g6_minimum_entity_dedup_history10_query_gid_v1_train",
+                "ghr_exp09_g6_minimum_entity_dedup_history10_query_gid_v1_valid",
+                "ghr_exp14_g6_relation_tree_dedup_history10_query_gid_v1_train",
+                "ghr_exp14_g6_relation_tree_dedup_history10_query_gid_v1_valid",
+                "rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_train",
+                "rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_valid",
+                "rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_train",
+                "rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_valid",
+                "ghr_tiger_aligned_collision_32x32_history10_query_gid_v1_train",
+                "ghr_tiger_aligned_collision_32x32_history10_query_gid_v1_valid",
+                "tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_train",
+                "tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_valid",
             },
         )
         serialized = json.dumps(actual)
@@ -177,6 +195,173 @@ class SftTrainingConfigTest(unittest.TestCase):
         self.assertEqual(smoke["cutoff_len"], 512)
         self.assertFalse(smoke["train_on_prompt"])
         self.assertEqual(smoke["report_to"], "none")
+
+    def test_rqkmeans_e4_formal_training_protocol(self) -> None:
+        layouts = {
+            "512x1024x2048": (
+                "models/Qwen3-0.6B-RQKMeans-E4-512x1024x2048-Vocab-v1"
+            ),
+            "1024x1024x1024": (
+                "models/Qwen3-0.6B-RQKMeans-E4-1024x1024x1024-Vocab-v1"
+            ),
+            "2048x1024x512": (
+                "models/Qwen3-0.6B-RQKMeans-E4-2048x1024x512-Vocab-v1"
+            ),
+        }
+        for layout, model_path in layouts.items():
+            stem = (
+                f"rqkmeans_e4_bge_m3_{layout}_history10_query_gid_"
+                "tiger_collision_v1"
+            )
+            config = self.load_yaml(f"{stem}.yaml")
+            self.assertEqual(config["model_name_or_path"], model_path)
+            self.assertEqual(config["dataset"], f"{stem}_train")
+            self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+            self.assertEqual(
+                config["tokenized_path"],
+                f"data/sft/tokenized/{stem}",
+            )
+            self.assertEqual(config["template"], "qwen3_nothink")
+            self.assertFalse(config["enable_thinking"])
+            self.assertFalse(config["train_on_prompt"])
+            self.assertTrue(config["packing"])
+            self.assertEqual(config["cutoff_len"], 512)
+            self.assertEqual(config["num_train_epochs"], 3.0)
+            self.assertEqual(config["save_strategy"], "epoch")
+            self.assertEqual(config["eval_strategy"], "epoch")
+            self.assertEqual(config["save_total_limit"], 3)
+            self.assertEqual(
+                config["per_device_train_batch_size"]
+                * config["gradient_accumulation_steps"]
+                * 4,
+                512,
+            )
+            self.assertNotIn("test.jsonl", json.dumps(config))
+
+    def test_ghr_formal_training_protocol(self) -> None:
+        candidates = {
+            "ghr_exp09_g6_minimum_entity_dedup_history10_query_gid_v1": (
+                "models/Qwen3-0.6B-GHR-EXP09-Vocab-v1",
+                512,
+            ),
+            "ghr_exp14_g6_relation_tree_dedup_history10_query_gid_v1": (
+                "models/Qwen3-0.6B-GHR-EXP14-Vocab-v1",
+                512,
+            ),
+            "ghr_tiger_aligned_collision_32x32_history10_query_gid_v1": (
+                "models/Qwen3-0.6B-GHR-TIGER-Aligned-Collision-32x32-Vocab-v1",
+                1024,
+            ),
+        }
+        for stem, (model_path, cutoff_len) in candidates.items():
+            config = self.load_yaml(f"{stem}.yaml")
+            self.assertEqual(config["model_name_or_path"], model_path)
+            self.assertEqual(config["dataset"], f"{stem}_train")
+            self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+            self.assertEqual(config["tokenized_path"], f"data/sft/tokenized/{stem}")
+            self.assertEqual(config["template"], "qwen3_nothink")
+            self.assertFalse(config["enable_thinking"])
+            self.assertFalse(config["train_on_prompt"])
+            self.assertTrue(config["packing"])
+            self.assertEqual(config["cutoff_len"], cutoff_len)
+            self.assertEqual(config["num_train_epochs"], 3.0)
+            self.assertEqual(config["save_strategy"], "epoch")
+            self.assertEqual(config["eval_strategy"], "epoch")
+            self.assertEqual(config["save_total_limit"], 3)
+            self.assertEqual(
+                config["per_device_train_batch_size"]
+                * config["gradient_accumulation_steps"]
+                * 4,
+                512,
+            )
+            self.assertNotIn("test.jsonl", json.dumps(config))
+
+    def test_rqkmeans_bge_formal_training_protocol(self) -> None:
+        stem = (
+            "rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_"
+            "tiger_collision_v1"
+        )
+        config = self.load_yaml(f"{stem}.yaml")
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-RQKMeans-BGE-1024x1024x1024-Vocab-v1",
+        )
+        self.assertEqual(config["dataset"], f"{stem}_train")
+        self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+        self.assertEqual(config["tokenized_path"], f"data/sft/tokenized/{stem}")
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertEqual(
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"]
+            * 4,
+            512,
+        )
+        self.assertNotIn("test.jsonl", json.dumps(config))
+
+    def test_rqvae_e4_formal_training_protocol(self) -> None:
+        stem = (
+            "rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_"
+            "tiger_collision_v1"
+        )
+        config = self.load_yaml(f"{stem}.yaml")
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-RQVAE-E4-1024x1024x1024-Vocab-v1",
+        )
+        self.assertEqual(config["dataset"], f"{stem}_train")
+        self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+        self.assertEqual(config["tokenized_path"], f"data/sft/tokenized/{stem}")
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 512)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertEqual(
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"]
+            * 4,
+            512,
+        )
+        self.assertNotIn("test.jsonl", json.dumps(config))
+
+    def test_tiger_mmbert_recall_128_formal_training_protocol(self) -> None:
+        stem = "tiger_mmbert_recall_128_1024x3_history10_query_gid_v1"
+        config = self.load_yaml(f"{stem}.yaml")
+        self.assertEqual(
+            config["model_name_or_path"],
+            "models/Qwen3-0.6B-TIGER-MMBERT-Recall-128-1024x3-Vocab-v1",
+        )
+        self.assertEqual(config["dataset"], f"{stem}_train")
+        self.assertEqual(config["eval_dataset"], f"{stem}_valid")
+        self.assertEqual(config["tokenized_path"], f"data/sft/tokenized/{stem}")
+        self.assertEqual(config["template"], "qwen3_nothink")
+        self.assertFalse(config["enable_thinking"])
+        self.assertFalse(config["train_on_prompt"])
+        self.assertTrue(config["packing"])
+        self.assertEqual(config["cutoff_len"], 1024)
+        self.assertEqual(config["num_train_epochs"], 3.0)
+        self.assertEqual(config["save_strategy"], "epoch")
+        self.assertEqual(config["eval_strategy"], "epoch")
+        self.assertEqual(config["save_total_limit"], 3)
+        self.assertEqual(
+            config["per_device_train_batch_size"]
+            * config["gradient_accumulation_steps"]
+            * 4,
+            512,
+        )
+        self.assertNotIn("test.jsonl", json.dumps(config))
 
     def test_formal_training_protocol(self) -> None:
         config = self.load_yaml("qwen3_0.6b_main_v1.yaml")

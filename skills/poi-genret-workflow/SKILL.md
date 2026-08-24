@@ -1,6 +1,6 @@
 ---
 name: poi-genret-workflow
-description: Safely organize, inspect, run, monitor, and document experiments in /ofs/map_search/hudan/poi_genret. Use for this repository's Embedding, SID, RQ-VAE, RQ-KMeans, GenPOI, TIGER, GNPR, SFT, retrieval evaluation, GPU training-platform launchers, or development-server GPU jobs. Enforce the repository scope, poi-gr environment, host GPU checks, streaming data handling, project-local outputs, launcher conventions, and reproducible experiment records.
+description: Safely organize, inspect, run, monitor, and document experiments in /ofs/map_search/hudan/poi_genret. Use for this repository's Embedding, SID, RQ-VAE, RQ-KMeans, GenPOI, TIGER, GNPR, SFT, retrieval evaluation, GPU training-platform launchers, or development-server GPU jobs. Enforce the repository scope, poi-gr environment, host GPU checks, streaming data handling, short project-local multiprocessing temp paths, launcher conventions, and reproducible experiment records.
 ---
 
 # POI GenRet Workflow
@@ -35,6 +35,22 @@ Follow these constraints for every task in `/ofs/map_search/hudan/poi_genret`.
 2. Create or modify a YAML config only when it represents a durable protocol, platform launcher, or reusable experiment—not merely to wrap one command.
 3. For a long job, write its log, PID, and eventual exit code under `outputs/run_control/<experiment>/`. Use a detached host process only after all input and output-path gates pass.
 
+## Preserve the current request in SFT
+
+1. Treat `cutoff_len` as the complete formatted Source+Assistant-target budget, not as the target PID length. Completed historical 128/256/512 configs, caches, checkpoints, and recorded evaluations remain immutable for reproducibility.
+2. Use `cutoff_len=1024` for every new history-aware SFT experiment and use the same value in its cache build, training, and generation evaluation. Recalculate per-device batch size and smoke-test GPU memory because doubling sequence length increases attention cost.
+3. Before building a new 1024-token cache, run the full Train/Valid token preflight. The accepted gate is exactly zero rows over 1024 and zero target truncation; never accept LLaMA-Factory's default source-prefix truncation as a data policy.
+4. If any row exceeds 1024, first derive safe JSONL with `scripts/sft/build_history_safe_data.py`. It may remove only the oldest complete events from the ascending-time `<HISTORY>` block. It must preserve `<CURRENT>`, the current GID and Query, the Assistant turn marker, and the complete target identifier. If immutable content still does not fit, stop instead of truncating it.
+5. Require `data/sft/tokenized/<version>/cache_manifest.json` to record the same `cutoff_len` as the training configuration. Never train a 1024 config from an old 512 cache or evaluate a 1024-trained model with an implicit shorter cutoff.
+
+## Keep multiprocessing temp paths short
+
+1. For Python or PyTorch jobs using DataLoader workers, `torchrun`, `multiprocessing.Manager`, Queue, or shared tensor transport, set `TMPDIR` to a short ASCII directory under `outputs/tmp/`, such as `outputs/tmp/rk512a`. Project-local placement is mandatory but does not make an arbitrarily long path safe.
+2. Never derive `TMPDIR` from the full experiment name, output directory name, dataset version, or model name. Keep the resolved absolute `TMPDIR` at most 64 bytes so Python can append `pymp-*`, `torchelastic_*`, and resource-sharer socket names without exceeding Linux's approximately 108-byte AF_UNIX address limit.
+3. Before consuming GPU resources, create the directory, verify it is writable, resolve its absolute path, and enforce the 64-byte limit in every hardware variant of the launcher. Use a distinct short tag per concurrently runnable experiment or platform, for example `rk512a`, `rk512d`, `rk1024a`, and `rk1024d`.
+4. Do not treat an ordinary config `--dry-run` as proof that the temp path works: dry-run stops before DataLoader and multiprocessing socket creation. Retain the static byte-length gate even when dry-run passes. When possible, exercise an AF_UNIX listener or multiprocessing tensor transfer in the host/platform environment; a Codex sandbox may reject socket creation with `EPERM`, which is different from a path-length failure.
+5. Diagnose repeated `OSError: AF_UNIX path too long` from `multiprocessing.resource_sharer`, `Listener`, or DataLoader as a fatal temp-path error, not OOM or NCCL failure. Confirm whether any training step or checkpoint exists, fix all sibling launchers, rerun syntax/tests, and relaunch from a clean pre-step state with the user's authorization.
+
 ## Organize and derive platform launchers
 
 1. Keep all durable training-platform/HDFS launcher files directly under the repository-level `launchers/` directory. Keep this directory flat: do not create method subdirectories. Preserve method, task, GPU type/count, and schedule in descriptive filenames such as `run_train_gnpr_sft_4a100_3epoch.sh`. Put reusable non-launcher Python entry points under `scripts/<method>/`; do not add `run_*` files directly at the repository root.
@@ -43,7 +59,7 @@ Follow these constraints for every task in `/ofs/map_search/hudan/poi_genret`.
 4. Existing plaintext user names, passwords, and related authentication values may be copied verbatim from the authorized reference launcher into the new ignored local launcher. Never replace required values with placeholders merely for the new launcher. Never print, echo, summarize, paste into documentation, expose in tool output, or commit those values.
 5. Change only task-specific values: config/model/data/output paths, experiment name, GPU type/count and matching batch or accumulation parameters, task arguments, and the final start command. Preserve the established environment and platform initialization sequence unless the user explicitly requests a platform change.
 6. Recalculate and verify global batch size, process count, checkpoint/evaluation cadence, and output isolation whenever resource parameters change. Diff the new launcher against its reference so every unrelated change is intentional.
-7. Before handoff or launch, run `bash -n`, verify executable permission, resolve every referenced config/entrypoint/path, and use the launcher's `--dry-run` or preflight mode when available. Syntax validation must not start training.
+7. Before handoff or launch, run `bash -n`, verify executable permission, resolve every referenced config/entrypoint/path, enforce the short `TMPDIR` gate above, and use the launcher's `--dry-run` or preflight mode when available. Syntax validation must not start training.
 
 ## Validate and record
 

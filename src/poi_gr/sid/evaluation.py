@@ -303,7 +303,7 @@ def load_poi_metadata(
     poi_data_path: Path,
     poi_ids: Sequence[str],
     selected_rows: set[int],
-) -> tuple[np.ndarray, dict[int, dict[str, Any]], int]:
+) -> tuple[np.ndarray, dict[int, dict[str, Any]], tuple[str, ...]]:
     """Join full category labels and selected Case metadata by POI ID."""
 
     row_by_id = {poi_id: row for row, poi_id in enumerate(poi_ids)}
@@ -361,7 +361,24 @@ def load_poi_metadata(
         )
     if len(case_records) != len(selected_rows):
         raise SidEvaluationError("部分热点碰撞 POI 缺少 Case 元数据")
-    return category_ids, case_records, len(category_index)
+    category_codes = tuple(
+        label for label, _ in sorted(category_index.items(), key=lambda item: item[1])
+    )
+    return category_ids, case_records, category_codes
+
+
+def load_aligned_category_codes(
+    poi_data_path: Path,
+    poi_ids_path: Path,
+    expected_rows: int,
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Load category_code IDs aligned to a frozen POI row catalog."""
+
+    poi_ids = _load_poi_ids(poi_ids_path, expected_rows)
+    category_ids, _, category_codes = load_poi_metadata(
+        poi_data_path.resolve(), poi_ids, set()
+    )
+    return category_ids, category_codes
 
 
 def compute_category_purity(
@@ -531,7 +548,7 @@ def evaluate_sid(
     selected_rows = {
         row for rows in rows_by_bucket.values() for row in rows
     }
-    category_ids, case_records, category_count = load_poi_metadata(
+    category_ids, case_records, category_codes = load_poi_metadata(
         poi_data_path.resolve(), sid_input.poi_ids, selected_rows
     )
     prefixes = compute_prefix_metrics(
@@ -565,7 +582,7 @@ def evaluate_sid(
             "poi_metadata_rows_matched": len(sid_input.poi_ids),
             "token_ranges_valid": True,
             "category_label_field": "category_code",
-            "distinct_category_count": category_count,
+            "distinct_category_count": len(category_codes),
         },
         "basic": basic,
         "layers": compute_layer_metrics(sid_input.codes, sid_input.codebook_sizes),

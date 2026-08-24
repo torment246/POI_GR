@@ -231,3 +231,108 @@ python scripts/tiger/evaluate_retrieval.py \
 
 - 正式产物位于 `outputs/eval/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/`；汇总 JSON/CSV SHA256 分别为 `9a6eee4796a76cf9ff0af5435ef3495adec5d7447124443a08634d811509718d` 和 `a0c63c8169693db8c9053f61b8a0bb05efb206a6c86a3a3215c0ee1d0787d35c`。
 - 该实验只证明固定 10,000 条 Validation、Beam=10 下 epoch 3 最优；未执行完整 Validation、Test 或其他 Beam 规模。
+
+## EXP-20260817-01 TIGER epoch 3 四类泛化 Validation 10k
+
+### 目标、数据与代码状态
+
+- 目标与假设：在固定普通/复杂地理 10k 之外，检验论文复现 TIGER 对已见 Query 新配对、新 Query 已见目标、Train 频次 1—5 长尾目标和 Train 零频冷目标的泛化能力；假设目标是否在 Train 出现是最主要的难度分界。
+- 数据版本：`outputs/eval/generalization_validation_suite_10k_v1/` 的四个互斥 Validation 子集，每组 10,000 条；参考 JSONL SHA256 依次为 `abb7ef59...01a3be`、`d74c3b4d...406e56`、`fe5290bb...4ee18`、`884b2ea0...52a`。三方法逐组业务键 SHA256 完全一致。
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，运行使用未提交工作树；每个 `result.json` 固定记录模型、Tokenizer、评估器与数据签名。
+
+### 配置、命令与环境
+
+- checkpoint 固定为 epoch 3 `checkpoint-16713`；无约束 Beam=10、返回 10 个候选、batch 32、chunk 1,000、历史实验 `cutoff_len=512`，不使用 Trie 或地理剪枝。
+- 四个单元在训练平台单卡 RTX 6000D 上并行完成，每个结果均为 `completed`、10,000 行。
+
+~~~bash
+python scripts/tiger/evaluate_retrieval.py \
+  --valid-file data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/generalization_validation_suite_10k_v1/<subset>_10000.jsonl \
+  --checkpoints outputs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-16713 \
+  --tokenizer models/Qwen3-0.6B-TIGER-Vocab-v1 \
+  --identifier-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20 \
+  --output-dir outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/tiger_e3 \
+  --num-beams 10 --per-device-eval-batch-size 32 --chunk-size 1000 --cutoff-len 512
+~~~
+
+### 核心结果、审计与结论
+
+| Validation 专项集 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 已见 Query / 未见配对 | 17.29% | 39.66% | 49.72% | 60.07% | 17.29% | 30.3067% | 34.4579% | 37.8330% |
+| 未见 Query / 已见目标 | 49.59% | 66.32% | 71.08% | 75.30% | 49.59% | 59.4685% | 61.4309% | 62.8133% |
+| 长尾目标（Train 1—5） | 26.01% | 38.67% | 44.49% | 52.33% | 26.01% | 33.3835% | 35.7853% | 38.3206% |
+| 冷目标（Train 0） | 7.08% | 11.29% | 13.74% | 17.78% | 7.08% | 9.5045% | 10.5062% | 11.8127% |
+
+- 四组宏平均 HR@1/HR@10/NDCG@10 为 24.9925%/51.3700%/37.6949%。新 Query 但目标已见明显好于目标未见，冷目标 HR@10 只有 17.78%，说明生成模型主要受目标训练覆盖约束，而不只是 Query 文本是否重复。
+- 事后真实 Token 审计发现四组超过旧 512 的行数为 `0/8/5/7`，最大总长度为 `489/635/593/556`；这些行沿用旧框架 Source-prefix 截断，单组指标理论最大扰动不超过 0.08pp。结果保留为历史 512 口径，不据此声称逐样本 Prompt 全部完整。
+- 正式产物位于 `outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/tiger_e3/`。如需发表级严格表，应统一以 1024 重评受影响单元；当前排序边距大于相应最大扰动，本轮不重复运行。
+
+## EXP-20260819-01 TIGER epoch 3 三层基础 Bucket 召回诊断
+
+### 目标与假设
+
+- 目标：在不重新训练、不改变 TIGER 论文复现解码协议的前提下，保存固定普通 Validation 10k 的逐样本 Beam 候选，并测量去掉第四层 collision code 后的三层基础 Bucket-HR，判断当前误差主要来自前三层 `Query→SID`，还是来自桶内 `C` 后缀。
+- 假设：若三层 Bucket-HR 显著高于精确 POI HR，则现有 Beam 已覆盖目标语义桶，后续应优先做桶展开与条件重排；若增量很小，则仅替换 `C` 或训练桶内排序器无法解决主要 Top-K 覆盖误差。
+- 本实验只诊断 TIGER epoch 3；不运行 E4/BGE RQ-KMeans、不加入 E4/地理/历史重排、不读取 Test。
+
+### 数据、代码状态与评测口径
+
+- 数据继续使用 `EXP-20260804-01` 的固定普通 Validation 10k：来源文件 SHA256 为 `20af3356c487952bf8a58753979b3c23c452d99d627bff858066f213d8dd8dfc`，对齐后子集 SHA256 为 `b06f4bd5cd62e12a3157e86394d1a82ce752872c34fe4b81e7c6fbe8f5282fa1`，业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 为 0。
+- checkpoint 固定为 epoch 3 `checkpoint-16713`；identifier 仍为冻结的 `[S1,S2,S3,C]` 映射，2,337,178 行、三层容量 `1024³`，映射 SHA256 为 `7998acbfc5dcd7222370bc258ef52fa2cf79ae22cd43d47758b473a6aa2250a8`。
+- 精确 POI 主指标完全保持原论文复现口径：无约束 Beam=10，非法完整 ID 保留原槽位并计 miss。新增诊断定义为：
+  - `raw-slot Bucket-HR`：以 `[S1,S2,S3]` 为桶，保留全部原始 Beam 槽位和重复桶；只要候选能解析出目录中存在的基础桶，即使完整 `C` 非法也可命中桶。
+  - `unique Bucket-HR`：先移除无法在目录中展开的基础桶，再按首次出现顺序对基础桶去重；该口径对应“生成若干唯一可展开桶”的候选上界。
+- 代码基线提交为 `7dd52b3437a9db41834aef638e446010d0df3610`，运行使用包含可选 Bucket 诊断、独立前三层前缀解析、原子候选轨迹保存和逐行一致性校验的未提交工作树；评测器与 TIGER 方法代码 SHA256 分别为 `6cd1f0d32676c4e9aa3d73bb391c5e3cd66038b179110a0edb57d4be2663299e` 和 `eb42c361ae6573b545c561e545b8e5af90644b05586c08a1af9200fe608ecf8f`。
+
+### 配置、命令与环境
+
+~~~bash
+TMPDIR=outputs/tmp/tbkt python scripts/tiger/evaluate_retrieval.py \
+  --valid-file data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl \
+  --checkpoints outputs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-16713 \
+  --expected-checkpoint-steps 16713 \
+  --expected-checkpoint-epochs 3 \
+  --tokenizer models/Qwen3-0.6B-TIGER-Vocab-v1 \
+  --identifier-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20 \
+  --output-dir outputs/eval/tiger_bucket_diagnostics_fixed10k_v3/tiger_e3 \
+  --num-beams 10 \
+  --per-device-eval-batch-size 32 \
+  --chunk-size 1000 \
+  --cutoff-len 512 \
+  --skip-data-hash \
+  --final-checkpoint-only \
+  --bucket-diagnostics
+~~~
+
+- 正式运行前完成 10 条单卡 GPU smoke；正式运行使用本机 NVIDIA RTX A6000 48GB，实际 batch size 32，耗时 1,251.78 秒、吞吐 7.989 条/秒、峰值显存 24,256,799,232 bytes，进程退出码为 0。
+
+### 核心结果
+
+| 排名口径 | HR@1 | HR@3 | HR@5 | HR@10 | 相对精确 POI HR 增量 |
+|---|---:|---:|---:|---:|---:|
+| 精确 `[S1,S2,S3,C]→POI` | 51.87% | 76.00% | 82.26% | 87.16% | — |
+| 三层 Bucket，保留原 Beam 槽位 | 54.89% | 78.03% | 83.65% | 88.06% | +3.02/+2.03/+1.39/+0.90pp |
+| 三层唯一可展开 Bucket | **55.53%** | **79.64%** | **85.10%** | **88.06%** | **+3.66/+3.64/+2.84/+0.90pp** |
+
+| 目标三层 Bucket 大小 | 样本数 | 占比 |
+|---|---:|---:|
+| 1 | 6,146 | 61.46% |
+| 2 | 1,643 | 16.43% |
+| 3—5 | 1,396 | 13.96% |
+| 6—10 | 522 | 5.22% |
+| 11—50 | 252 | 2.52% |
+| 51+ | 41 | 0.41% |
+
+- 目标桶平均大小为 2.5339，最大为 172；38.54% 的请求目标位于碰撞桶，与此前请求加权碰撞审计一致。
+- 三层前缀只从原始序列中的 `<TARGET_POI>, S1, S2, S3` 独立解析；即使后续 `C`、闭合符或 EOS 非法/缺失，只要该前缀存在且可在目录展开，仍计入 Bucket 候选。100,000 个 Beam 候选中，23.870% 的前三层前缀无法在目录展开，10.668% 是此前已出现基础桶的重复候选；每条请求平均保留 6.5462 个唯一可展开桶。
+- 精确 HR/NDCG、Valid ID Rate 74.105% 以及四类 invalid error 计数均与 `EXP-20260804-01` 的历史结果逐字段完全一致，说明新增轨迹与 Bucket 统计没有改变原解码和主指标。
+
+### 产物核验、结论与下一步
+
+- 正式目录为 `outputs/eval/tiger_bucket_diagnostics_fixed10k_v3/tiger_e3/runs/valid_checkpoint-16713_beam10_bucketdiag_subset10000/`。`candidate_trace.jsonl` 使用 `tiger-candidate-trace-v3`，共 10,000 行、每行 10 个候选、约 36 MiB，SHA256 为 `efbbaa404774afaae9329565e7b59dea10a20b97562cae860039f8d6b28b5fd0`；manifest SHA256 为 `fdb9a9ca818e76e794180a5f213b8cf613b8b3c023fdf54c9c5ada89a20a8da7`。
+- 独立逐行复算确认：从原始 token 重建三层前缀及目录桶大小后，行号连续、候选 rank 为 1—10，存储的前缀、桶大小和 exact/raw/unique rank 均为 0 条不一致；10 个分片各 1,000 行且哈希全部通过，按序拼接的 SHA256 与总轨迹一致，复算三组 HR 与 `result.json` 完全一致。实现收敛期间的 v1 漏计后缀非法候选，v2 虽然指标正确但轨迹中的桶大小不自洽；二者仅保留为调试产物，正式结论只采用通过逐行复算的 v3。
+- 关键结论：Beam=10 下有 1,284 条精确 POI miss，其中 1,194 条连目标三层桶也未进入候选；删除 `C` 并在当前 Beam 内做理想桶展开最多只新增 90 条 Top-10 命中，即 HR@10 理论增量仅 0.90pp。当前 Top-10 主瓶颈因此是前三层目标 Bucket 覆盖，而不是 collision code。
+- Top-1 仍存在最多 3.66pp 的理想 Bucket 排名空间，说明局部重排可能改善首位排序，但不能单靠它大幅提高候选覆盖。下一最小实验应使用同一口径测量 BGE+RQ-KMeans 与 E4 候选；只有它们的 Bucket-HR 明显高于 TIGER，才继续 E4/地理/历史桶内重排，否则转入受限 QD-RQ Top-32 弱权重门禁。本实验不据 TIGER 单点结果提前启动新 SFT。

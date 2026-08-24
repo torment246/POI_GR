@@ -1,0 +1,29 @@
+experiment_id: EXP-20260820-01
+
+data:
+  base_sid_codes: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/evaluations/epoch_20/sid_codes.npy
+  base_sid_manifest: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/evaluations/epoch_20/sid_manifest.json
+  embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  poi_dir: data/beijing_poi_clean_20260715_json
+  rqvae_checkpoint: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/checkpoint_epoch_20.pt
+  rqvae_resolved_config: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/resolved_config.json
+
+quantizer:
+  codebook_size: 32
+  geo_weight: 0.5
+  geo_scales_km: [0.5, 1, 2, 4, 8, 16, 32, 64]
+  kmeans_sample_size: 300000
+  kmeans_batch_size: 8192
+  kmeans_max_iter: 100
+  kmeans_n_init: 3
+  candidate_first: 8
+  candidate_second: 8
+
+runtime:
+  device: auto
+  encode_batch_size: 8192
+  search_batch_size: 8192
+  seed: 42
+
+output_dir: outputs/ghr_sid/EXP-20260820-01_tiger_aligned_collision_32x32_v1

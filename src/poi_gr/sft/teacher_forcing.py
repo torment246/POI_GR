@@ -29,6 +29,16 @@ def empty_teacher_forcing_metrics() -> dict[str, Any]:
             "top1_all_sum": 0,
             "top10_all_sum": 0,
         },
+        "conditional_suffix": {
+            "count": 0,
+            "top1_all_sum": 0,
+            "top10_all_sum": 0,
+        },
+        "conditional_tail": {
+            "count": 0,
+            "top1_all_sum": 0,
+            "top10_all_sum": 0,
+        },
         "full_serialization": {
             "count": 0,
             "top1_all_sum": 0,
@@ -66,6 +76,7 @@ def update_teacher_forcing_metrics(
     identifier_indices: Sequence[int],
     group: str,
     context_indices: Sequence[int] = (),
+    conditional_tail_indices: Sequence[int] = (),
 ) -> None:
     """Add one teacher-forced target sequence to the accumulator."""
 
@@ -79,7 +90,12 @@ def update_teacher_forcing_metrics(
         raise TeacherForcingError("逐位置预测结果长度不一致")
     if length == 0 or len(semantic_indices) != 3:
         raise TeacherForcingError("目标序列必须包含三层 semantic identifier")
-    all_indices = (*context_indices, *semantic_indices, *identifier_indices)
+    all_indices = (
+        *context_indices,
+        *semantic_indices,
+        *identifier_indices,
+        *conditional_tail_indices,
+    )
     if any(index < 0 or index >= length for index in all_indices):
         raise TeacherForcingError("目标位置索引越界")
     if not group:
@@ -88,6 +104,13 @@ def update_teacher_forcing_metrics(
         range(context_indices[0], context_indices[0] + len(context_indices))
     ):
         raise TeacherForcingError("context 位置必须连续且有序")
+    if conditional_tail_indices and tuple(conditional_tail_indices) != tuple(
+        range(
+            conditional_tail_indices[0],
+            conditional_tail_indices[0] + len(conditional_tail_indices),
+        )
+    ):
+        raise TeacherForcingError("conditional tail 位置必须连续且有序")
     if any(not math.isfinite(float(value)) or float(value) < 0 for value in nll_values):
         raise TeacherForcingError("NLL 必须为有限非负数")
 
@@ -149,6 +172,29 @@ def update_teacher_forcing_metrics(
         all(bool(top10_correct[index]) for index in identifier_indices)
     )
 
+    suffix_indices = tuple(
+        index for index in identifier_indices if index > int(semantic_indices[-1])
+    )
+    if suffix_indices:
+        suffix = metrics["conditional_suffix"]
+        suffix["count"] += 1
+        suffix["top1_all_sum"] += int(
+            all(bool(top1_correct[index]) for index in suffix_indices)
+        )
+        suffix["top10_all_sum"] += int(
+            all(bool(top10_correct[index]) for index in suffix_indices)
+        )
+
+    if conditional_tail_indices:
+        tail = metrics["conditional_tail"]
+        tail["count"] += 1
+        tail["top1_all_sum"] += int(
+            all(bool(top1_correct[index]) for index in conditional_tail_indices)
+        )
+        tail["top10_all_sum"] += int(
+            all(bool(top10_correct[index]) for index in conditional_tail_indices)
+        )
+
     serialization = metrics["full_serialization"]
     serialization["count"] += 1
     serialization["top1_all_sum"] += int(all(top1_correct))
@@ -162,6 +208,13 @@ def update_teacher_forcing_metrics(
             "target_nll_sum": 0.0,
             "identifier_top1_all_sum": 0,
             "identifier_top10_all_sum": 0,
+            "suffix_count": 0,
+            "suffix_top1_all_sum": 0,
+            "suffix_top10_all_sum": 0,
+            "tail_count": 0,
+            "tail_top1_all_sum": 0,
+            "tail_top10_all_sum": 0,
+            "positions": {},
         },
     )
     group_slot["sample_count"] += 1
@@ -173,6 +226,30 @@ def update_teacher_forcing_metrics(
     group_slot["identifier_top10_all_sum"] += int(
         all(bool(top10_correct[index]) for index in identifier_indices)
     )
+    if suffix_indices:
+        group_slot["suffix_count"] += 1
+        group_slot["suffix_top1_all_sum"] += int(
+            all(bool(top1_correct[index]) for index in suffix_indices)
+        )
+        group_slot["suffix_top10_all_sum"] += int(
+            all(bool(top10_correct[index]) for index in suffix_indices)
+        )
+    if conditional_tail_indices:
+        group_slot["tail_count"] += 1
+        group_slot["tail_top1_all_sum"] += int(
+            all(bool(top1_correct[index]) for index in conditional_tail_indices)
+        )
+        group_slot["tail_top10_all_sum"] += int(
+            all(bool(top10_correct[index]) for index in conditional_tail_indices)
+        )
+    for index, name in enumerate(position_names):
+        slot = group_slot["positions"].setdefault(name, _empty_slot())
+        _update_slot(
+            slot,
+            top1=bool(top1_correct[index]),
+            top10=bool(top10_correct[index]),
+            nll=float(nll_values[index]),
+        )
 
 
 def _finalize_slot(slot: dict[str, float | int]) -> dict[str, float | int]:
@@ -224,6 +301,40 @@ def finalize_teacher_forcing_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             "identifier_top10_all_accuracy": (
                 int(slot["identifier_top10_all_sum"]) / group_samples
             ),
+            "conditional_suffix": (
+                {
+                    "count": int(slot["suffix_count"]),
+                    "top1_all_accuracy": (
+                        int(slot["suffix_top1_all_sum"]) / int(slot["suffix_count"])
+                    ),
+                    "top10_all_accuracy": (
+                        int(slot["suffix_top10_all_sum"]) / int(slot["suffix_count"])
+                    ),
+                }
+                if int(slot["suffix_count"]) > 0
+                else None
+            ),
+            "conditional_tail": (
+                {
+                    "count": int(slot.get("tail_count", 0)),
+                    "top1_all_accuracy": (
+                        int(slot.get("tail_top1_all_sum", 0))
+                        / int(slot["tail_count"])
+                    ),
+                    "top10_all_accuracy": (
+                        int(slot.get("tail_top10_all_sum", 0))
+                        / int(slot["tail_count"])
+                    ),
+                }
+                if int(slot.get("tail_count", 0)) > 0
+                else None
+            ),
+            "positions": {
+                position_name: _finalize_slot(position_slot)
+                for position_name, position_slot in sorted(
+                    slot.get("positions", {}).items()
+                )
+            },
         }
     return {
         "sample_count": sample_count,
@@ -247,6 +358,16 @@ def finalize_teacher_forcing_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             for name, slot in metrics["semantic_prefixes"].items()
         },
         "full_identifier": _finalize_exact(metrics["full_identifier"]),
+        "conditional_suffix": (
+            _finalize_exact(metrics["conditional_suffix"])
+            if int(metrics["conditional_suffix"]["count"]) > 0
+            else None
+        ),
+        "conditional_tail": (
+            _finalize_exact(metrics["conditional_tail"])
+            if int(metrics["conditional_tail"]["count"]) > 0
+            else None
+        ),
         "full_serialization": _finalize_exact(metrics["full_serialization"]),
         "groups": groups,
     }

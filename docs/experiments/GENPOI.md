@@ -548,3 +548,114 @@ PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 python scripts/sft/diagnose_sid_teacher_fo
 - 正式结果位于 `outputs/eval/sid_teacher_forcing_fixed10k_v1/genpoi_centered_e3/result.json`，SHA256 为 `287590c6e99ba43640f9f3634220e92143f513888fa6736e9e0ae0a729effd9c`；进程状态为 `completed`、退出码 0。
 - 结论：Centered GenPOI 在正确地理前缀下拥有三者最易学习的 semantic SID，GNPR 的根 SID 弱预测问题未在 GenPOI 上复现；但 GenPOI 把主要难度前移到了细粒度 GID4—GID6，完整 identifier 与 TIGER 仍处于同一水平。后续 RQ-KMeans/RQ-VAE 同输入选择应把“给定统一上下文后的 SID1/2/3 可预测性”与完整 GID+SID 路径同时报告，不能只依据 SID 唯一率或约束 Beam 最终 HR。
 - 本实验仍只覆盖固定 10,000 条、epoch 3 和 gold-prefix 诊断，不包含自由生成错误传播，也不能隔离 GenPOI 高 SID 准确率中由 gold GID 提供的条件信息。若后续需要严格比较纯 SID，本实验建议的最小补充是统一目标结构或训练一个不在 Assistant 前置 GID 的对照，而不是直接把当前 83.97% 与 TIGER 75.06%解释为码本绝对提升。
+
+## EXP-20260811-01 复杂地理 Query Validation 10k 三方法专项评测
+
+### 目标、假设与数据版本
+
+- 目标：从完整 597,421 条 Validation 中冻结新的 10,000 条复杂地理 Query 专项集，使用各方法已冻结的 epoch-3 checkpoint 和原论文复现解码协议，比较 TIGER、GNPR-SID 与 Centered GenPOI，检验 GenPOI 的地理表示和 SSP+TCG 是否在更相关的 Query 分布上体现优势；本实验不重训、不读取 Test。
+- 假设：若 Centered GenPOI 的地理模块有效，则在显式包含附近、距离、方位、路口/对面、内外/入口或地铁出口关系的 Query 上，其 HR@3/5/10 或 NDCG@10 相对 TIGER 的优势应比原随机固定 10k 更明显；若只提高合法率而不能改善排序，则 TIGER 仍会在主要召回指标上领先。
+- Query 取自 `data/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2/valid.jsonl` 的 `<CURRENT><QUERY>`，先做 NFKC、转小写和去空白，再要求长度不低于 6 且至少命中一类显式地理关系规则。完整 Validation 中有 15,029 条候选，按 `SHA256(order_id\0searchid\0target_poi_id)` 从小到大稳定无放回抽取 10,000 条；筛选不使用任何模型输出，也不使用用户—目标 GID 公共前缀标签。
+- 专项集 JSONL SHA256 为 `3ab77534d7ab4e289dd34fd0c10cb709f501143a3d0d782787873020be5c6a0f`，manifest SHA256 为 `1ff12b1cd3e3c65819e941c74c5554744fdcd4aeaf833296efef86b2c9a4f710`。TIGER、GNPR-SID 和 GenPOI 按 `order_id + searchid + target_poi_id` 精确对齐，业务键顺序 SHA256 均为 `4f83210dddb5087bbac3122b3b9646a2a933517b9b4311bb57dc3cc6a1a15f07`，目标 POI 错配为 0。
+- 选中样本命中方位/交通出口/距离/路口或对面/内外入口/附近规则的次数为 6,260/3,106/670/422/157/100；规则可重叠。用户—目标 GID 公共前缀长度 2/3/4/5/6 的样本数为 115/4,043/3,958/1,785/99，该分布只用于审计，不参与抽样。
+
+### 代码状态、配置与环境
+
+- 运行时 Git HEAD 为 `7dd52b3437a9db41834aef638e446010d0df3610`，工作树非干净。本实验新增 `src/poi_gr/sft/geo_query_subset.py`、`scripts/sft/build_geo_query_subset.py` 和对应合成测试；TIGER/GNPR 评测器增加显式 `--final-checkpoint-only`，默认三 checkpoint 协议不变。目录整理后 TIGER 的方法源码指纹路径同步为 `src/poi_gr/methods/tiger/eval.py`。
+- 服务器 Python/Transformers 冷启动会触发 Auto 类遍历完整模型注册表；评测共享加载器在核验三份配置均固定为 Qwen2 fast tokenizer 和 `Qwen3ForCausalLM` 后改为直接具体类加载。该变化不修改 tokenizer 文件、Prompt 模板、模型权重或生成参数。
+- 三者均为 epoch 3、Beam=10、返回 10 个候选、BF16、batch 32、chunk 1,000、cutoff 512。TIGER/GNPR 保持无约束生成并将非法 ID 留在原 Beam 排名；GenPOI 保持冻结 Centered Trie、Query-only 7 类 proximity head、`gamma=2` SSP 和 TCG 约束。
+- GenPOI 新 SSP 预测 10,000 条全部完成，`target_fields_used=[]`；预测 λ=3/4 为 6,223/3,777 条，对应预填 GID 1/2 层，预测 Parquet SHA256 为 `f51cc07647aead12893a31eb8e6524a3b6d114a08113f73efa1d960292ba066c`。首次误调用北京序分类头入口时被 `schema_version` 在加载权重前拒绝，随后按 Centered 原协议改用 `predict_proximity.py`，未改动分类头。
+- 环境为 NVIDIA RTX A6000 48GB、Python 3.10.20、PyTorch 2.9.1+cu128、Transformers 4.52.4。三次正式推理退出码均为 0，未发生 OOM、batch 回退或断点恢复；TIGER/GNPR/GenPOI 吞吐为 6.96/6.65/4.80 samples/s，峰值 PyTorch allocated 显存约 24.26/24.46/24.37GB。
+
+~~~bash
+python scripts/sft/build_geo_query_subset.py \
+  --valid-file data/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2/valid.jsonl \
+  --output-dir outputs/eval/geo_query_complex_validation_10k_v1 \
+  --subset-size 10000 --min-query-length 6
+
+python scripts/genpoi/predict_proximity.py \
+  --data-dir outputs/eval/geo_query_complex_validation_10k_v1/genpoi_centered_e3/proximity_eval_data \
+  --head-dir outputs/genpoi/proximity_head_bge_m3_v1 \
+  --output-dir outputs/eval/geo_query_complex_validation_10k_v1/genpoi_centered_e3/ssp_predictions \
+  --encode-batch-size 256 --encode-buffer-size 8192
+
+python scripts/tiger/evaluate_retrieval.py ... \
+  --checkpoints outputs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-16713 \
+  --expected-checkpoint-steps 16713 --expected-checkpoint-epochs 3 \
+  --final-checkpoint-only --num-beams 10 --skip-data-hash
+
+python scripts/gnpr/evaluate_retrieval.py ... \
+  --checkpoints outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-16167 \
+  --expected-checkpoint-steps 16167 --expected-checkpoint-epochs 3 \
+  --final-checkpoint-only --num-beams 10 --skip-data-hash
+
+python scripts/sft/evaluate_retrieval.py --mode valid-checkpoints ... \
+  --checkpoints outputs/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_gpu4_a100_e3/checkpoint-17202 \
+  --expected-checkpoint-steps 17202 --expected-checkpoint-epochs 3 \
+  --num-beams 10 --top-k 10 --skip-data-hash
+~~~
+
+### 核心指标
+
+| 方法 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID/PID |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| TIGER epoch 3 | **64.52%** | 79.79% | 83.86% | 87.17% | **64.52%** | **73.6083%** | 75.2954% | 76.3827% | 64.126% |
+| GNPR-SID epoch 3 | 61.26% | 75.87% | 79.44% | 82.34% | 61.26% | 69.9319% | 71.4098% | 72.3661% | 73.414% |
+| Centered GenPOI epoch 3 | 63.63% | **80.36%** | **84.80%** | **88.97%** | 63.63% | 73.5806% | **75.4148%** | **76.7836%** | **100%** |
+
+| Centered GenPOI 相对 TIGER | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 |
+|---|---:|---:|---:|---:|---:|
+| 原随机固定 Validation 10k | +0.11pp | +0.31pp | +0.51pp | +0.67pp | +0.3240pp |
+| 复杂地理 Query Validation 10k | **-0.89pp** | **+0.57pp** | **+0.94pp** | **+1.80pp** | **+0.4009pp** |
+
+- 三种方法在专项集上的 HR@1 均比原随机固定 10k 高 11.60—12.65pp，说明显式地理关系和更长文本同时提高了目标辨识度；该专项集是“地理相关”而非“更难”集合，不能把共同增益归因于 GenPOI。
+- Centered GenPOI 的主要正证据出现在候选覆盖：相对 TIGER 的 HR@10 优势由 0.67pp 扩大到 1.80pp，HR@3/5 优势也扩大到 0.57/0.94pp，NDCG@10 保持第一；但 HR@1 反而低 0.89pp，NDCG@3 低约 0.03pp。当前证据支持 SSP+TCG 改善地理 Query 的 Top-K 覆盖和后段排序，不支持其已经解决 Top-1 精排。
+- GenPOI GID6/SID3/base PID9/Final PID top-1 exact match 为 87.14/69.19/67.82/63.63%，完整结构及 PID 合法率均为 100%；相比原随机集的 GID6 74.00%，地理 Query 的更强位置线索确实被模型利用，但最终 Top-1 仍受 SID 和 Dedup 排序影响。
+- GNPR 在专项集上的 HR@10 比原随机集下降 0.73pp，尽管 HR@1 上升 11.60pp；其无效候选率由原结果的约 21.19% 上升至 26.586%，仍明显弱于 TIGER 与 GenPOI，未显示 content-geo SID 对此类 Query 的额外收益。
+
+### 产物、结论与下一步
+
+- 全部产物位于 `outputs/eval/geo_query_complex_validation_10k_v1/`。TIGER/GNPR/GenPOI 汇总 JSON SHA256 分别为 `53320cff75bbf952f1b09efe93571c6ca9892003d628be08552b95ab6505e9b8`、`d11d307a64097a1f63e5bbb47a18a5fffad5c8e99eff8c261e0ac3fe1284a02e`、`2a05c19bdba7c3642538aa2677161d4bb57aec32262518fa37faf48170f6ea3b`；三组 run 均覆盖 10,000 条且状态为 `completed`。
+- 结论：本实验给出“有限支持”。Centered GenPOI 在复杂地理 Query 上成为 HR@3/5/10、NDCG@5/10 最优完整方法，Top-10 相对 TIGER 的优势明显扩大；但 TIGER 仍是 HR@1 和 NDCG@1/3 最优，说明 GenPOI 的地理约束更像扩大正确候选覆盖，尚未转化为稳定 Top-1 优势。
+- 本结果仍是北京同城 Validation，不能证明跨城泛化；规则会将部分含“东门”“A口”的 POI 名称视为地理约束，且三种完整方法的标识结构与解码约束不同。若要隔离地理约束本身，下一最小补充应在同一专项集只对 Centered GenPOI 做 TCG-only 与 SSP+TCG 配对，而不是继续扩充三方法矩阵。
+
+## EXP-20260817-03 Centered GenPOI epoch 3 四类泛化 Validation 10k
+
+### 目标、数据与代码状态
+
+- 目标与假设：在四类冻结泛化集上检验 Centered GenPOI 的显式 GID PID、TCG 与 Query-only SSP 是否主要改善 Top-K 覆盖，尤其是长尾和冷目标；假设其相对 TIGER 的优势会集中在 HR@3/5/10，而非所有集合的 HR@1。
+- 数据版本与 `EXP-20260817-01/02` 完全相同，四组各 10,000 条且三方法逐组业务键一致。SSP 仅从当前 Query 预测，冻结 head SHA256 为 `231b923f...f1e93`，没有使用目标字段。
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，运行使用未提交工作树。前三组在训练平台完成；cold-target 的旧 512 运行在 Prompt 校验阶段失败、未生成正式 run，随后使用当前 1024 安全协议在本机补跑。
+
+### 配置、失败原因、修复与环境
+
+- checkpoint 固定为 epoch 3 `checkpoint-17202`；TCG+SSP、`gamma=2`、Beam=10、Top-K=10、batch 32、chunk 1,000。前三组沿用历史 `cutoff_len=512`；cold-target 显式使用 1024，其他模型、Trie、SSP 和生成参数不变。
+- cold-target 共 7/10,000 条超过 512，最大 566；第 63 条使旧 Source-prefix 截断删除 Assistant generation marker，前置校验报 `Assistant generation prompt 位置不正确`。增大到 1024 后 100 条本机 A6000 smoke 先行通过，随后正式 10,000/10,000 完成，结构与 PID 合法率均为 100%；正式结果 SHA256 为 `ccb6f200e1c9d350af81456d1f4fa8f6fe4fe2d35eaf57839dad69774e17c2cb`。
+- `seen_query_unseen_pair` 与 `unseen_query_seen_target` 在训练平台单卡 RTX 6000D 完成，`long_tail_target` 同样在 6000D 完成；cold-target 在本机 RTX A6000 完成，峰值显存约 25.05GiB、生成耗时 1,941.69 秒、5.15 samples/s。
+
+~~~bash
+CUDA_VISIBLE_DEVICES=0 TMPDIR=/ofs/map_search/hudan/poi_genret/outputs/tmp/gcold \
+python scripts/sft/evaluate_retrieval.py \
+  --mode valid-checkpoints \
+  --valid-file data/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2/valid.jsonl \
+  --reference-validation-subset outputs/eval/generalization_validation_suite_10k_v1/cold_target_10000.jsonl \
+  --checkpoints outputs/sft/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_gpu4_a100_e3/checkpoint-17202 \
+  --tokenizer models/Qwen3-0.6B-GenPOI-Vocab-v1 \
+  --trie-dir outputs/eval/genpoi_centered_geope32_tiger_rqvae_1024x3_history10_query_gid_v2_gpu4_a100_e3/trie \
+  --ssp-predictions-dir outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/cold_target/genpoi_centered_e3/ssp_predictions \
+  --output-dir outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/cold_target/genpoi_centered_e3 \
+  --num-beams 10 --top-k 10 --per-device-eval-batch-size 32 --chunk-size 1000 --cutoff-len 1024 --skip-data-hash
+~~~
+
+### 核心结果、审计与结论
+
+| Validation 专项集 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 已见 Query / 未见配对 | **18.93%** | **41.87%** | **52.41%** | **63.89%** | **18.93%** | **32.2553%** | **36.6035%** | **40.3454%** |
+| 未见 Query / 已见目标 | 49.07% | **66.49%** | **71.72%** | **76.74%** | 49.07% | 59.4048% | **61.5631%** | **63.2055%** |
+| 长尾目标（Train 1—5） | 25.73% | **39.84%** | **46.79%** | **55.11%** | 25.73% | **33.9490%** | **36.8203%** | **39.5168%** |
+| 冷目标（Train 0） | **7.28%** | **12.01%** | **15.39%** | **20.81%** | **7.28%** | **9.9946%** | **11.3793%** | **13.1261%** |
+
+- 四组宏平均 HR@1/HR@10/NDCG@10 为 25.2525%/54.1375%/39.0484%，比 TIGER 高 0.26/2.7675/1.3535pp。GenPOI 在四组 HR@10/NDCG@10 均为第一；HR@1 只在已见 Query 新配对和冷目标第一，在新 Query 已见目标与长尾目标分别低 TIGER 0.52/0.28pp，符合“改善候选覆盖多于 Top-1 精排”的假设。
+- 真实 Token 审计显示四组超 512 行数为 `0/11/6/7`，最大长度为 `501/644/605/566`。cold-target 已按 1024 完整补跑；另外两组历史 512 结果最多受 0.11/0.06pp 扰动，最坏界仍不足以翻转其与 TIGER 的 HR@1 排序或 Top-K 结论。
+- 正式产物位于 `outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/genpoi_centered_e3/`。本结果支持显式地理结构与约束生成改善泛化 Top-K，但北京同城数据仍不能证明跨城泛化；严格发表表应统一把所有受影响单元重评为 1024。

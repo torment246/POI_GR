@@ -137,6 +137,54 @@ output_dir: {output_dir}
         self.assertTrue((config.output_dir / "_SUCCESS").is_file())
         self.assertFalse((config.output_dir / ".work").exists())
 
+    def test_category_code_first_level_is_exact(self) -> None:
+        config_path = self._write_fixture()
+        config_text = config_path.read_text(encoding="utf-8")
+        config_text = config_text.replace(
+            "  codebook_sizes: [4, 4, 4]\n",
+            "  codebook_sizes: [4, 4, 4]\n"
+            "  first_level_mode: category_code\n",
+        ).replace(
+            "expected:\n  rows: 64\n",
+            "expected:\n  rows: 64\n  category_count: 4\n",
+        )
+        config_path.write_text(config_text, encoding="utf-8")
+
+        config = load_rqkmeans_config(config_path, PROJECT_ROOT)
+        result = run_rqkmeans(config, project_root=PROJECT_ROOT)
+        self.assertEqual(result["status"], "completed")
+        sid_input = load_sid_input(config.output_dir / "sid_manifest.json")
+        expected_categories = np.repeat(
+            np.arange(4, dtype=np.int32), 16
+        )
+        np.testing.assert_array_equal(
+            sid_input.codes[:, 0], expected_categories
+        )
+        np.testing.assert_array_equal(
+            np.load(config.output_dir / "category_ids.npy"),
+            expected_categories,
+        )
+        metrics = json.loads(
+            (config.output_dir / "metrics.json").read_text(encoding="utf-8")
+        )
+        first_purity = metrics["prefixes"][0]["category_purity"]
+        self.assertEqual(first_purity["micro_purity"], 1.0)
+        self.assertEqual(first_purity["macro_purity"], 1.0)
+        self.assertTrue(
+            metrics["validation"]["category_first_level_exact_assignment"]
+        )
+        manifest = json.loads(
+            (config.output_dir / "sid_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["first_level"]["mode"], "category_code")
+        self.assertTrue(manifest["first_level"]["exact_assignment"])
+        self.assertTrue((config.output_dir / "category_vocab.json").is_file())
+        self.assertTrue(
+            (config.output_dir / "category_training_counts.npy").is_file()
+        )
+
     def test_faiss_residual_quantizer_screen(self) -> None:
         config = load_rqkmeans_config(
             self._write_fixture(),

@@ -22,6 +22,22 @@ from poi_gr.methods.tiger.data import (
 from poi_gr.sft.data import TimeSplit, parse_iso_date
 
 
+def parse_codebook_sizes(value: str) -> tuple[int, int, int]:
+    """Parse exactly three positive comma-separated base-codebook sizes."""
+
+    try:
+        sizes = tuple(int(item.strip()) for item in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "码本容量必须是三个逗号分隔的正整数"
+        ) from error
+    if len(sizes) != 3 or any(size <= 0 for size in sizes):
+        raise argparse.ArgumentTypeError(
+            "码本容量必须是三个逗号分隔的正整数"
+        )
+    return sizes
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -83,6 +99,15 @@ def parse_args() -> argparse.Namespace:
         help="TIGER 用户哈希 Token 数量，论文口径固定为 2000。",
     )
     parser.add_argument(
+        "--base-codebook-sizes",
+        type=parse_codebook_sizes,
+        default=(1024, 1024, 1024),
+        help=(
+            "三层 base SID 的预期码本容量，逗号分隔；"
+            "默认 1024,1024,1024。"
+        ),
+    )
+    parser.add_argument(
         "--max-retained-per-split",
         type=int,
         default=None,
@@ -120,6 +145,7 @@ def main() -> int:
             max_history_events=args.max_history_events,
             geohash_length=args.geohash_length,
             user_bucket_count=args.user_bucket_count,
+            expected_base_codebook_sizes=args.base_codebook_sizes,
             max_retained_per_split=args.max_retained_per_split,
             progress=lambda message: print(
                 message,

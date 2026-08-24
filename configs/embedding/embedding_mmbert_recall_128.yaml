@@ -1,0 +1,30 @@
+job_name: beijing_poi_mmbert_recall_128
+
+data:
+  input_dir: data/beijing_poi_clean_20260715_json
+  file_pattern: part-*.json
+  success_marker: _SUCCESS
+  id_field: poi_id
+  text_field: text
+  expected_rows: 2337178
+  check_unique_ids: true
+
+model:
+  path: /ofs/map_search/xiaolu/multilingual_search/recall/mmBERT-emb/output_checkpoint/output_4gpus_1pos_30neg_add_mlp_v2_plus/checkpoint-00612000
+  backend: mmbert_recall
+  device: cuda
+  batch_size: 256
+  encode_buffer_size: 8192
+  max_seq_length: 256
+  torch_dtype: bfloat16
+  attention: sdpa
+  padding_side: right
+  normalize_embeddings: true
+  truncate_dim: null
+  prompt_name: null
+
+output:
+  dir: outputs/embeddings/beijing_poi_mmbert_recall_128
+  embedding_dtype: float16
+  checkpoint_interval_batches: 20
+  resume: true

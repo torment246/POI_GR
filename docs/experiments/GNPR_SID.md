@@ -572,3 +572,40 @@ PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 python scripts/sft/diagnose_sid_teacher_fo
 - 正式结果位于 `outputs/eval/sid_teacher_forcing_fixed10k_v1/{tiger_e3,gnpr_e3}/result.json`，结果 SHA256 分别为 `2424c7b7a1bdbcb1bfc9ca24b55485e43770a2c99067daaf968de6cc84a022a6`、`02efc13335b42a3b6e0bde87197a523cbedaae6078a4eeb6338d447872df88f9`；两次进程退出码均为 0。2 条样本 GPU smoke 先行通过，正式结果各覆盖 10,000 条。
 - 结论：当前 GNPR 相对 TIGER 的劣势主要来自 SID 第一层不够容易由 Query/历史预测，而不是 A100 与 6000D 的训练卡差异、整体 SFT 未学会或无约束解码。该定位与既有静态审计一致：GNPR-512 的第一、二层类别纯度 44.63%/62.02%，低于 TIGER-1024 的 69.28%/77.27%。GNPR 的 base SID 唯一率更高和后层更易预测，不能抵消根前缀弱语义对自回归检索造成的损失。
 - 本实验能定位层级，但不能单独区分根因来自 content-geo 特征融合、512 容量选择还是 Diversity Loss。后续 Query-Augmented Relational SID 实验应把第一层 Query 可预测性、前缀语义纯度与最终唯一率并列作为选择标准；当前不因此重训既有 GNPR，也不提前启动 RQ-KMeans。
+
+## EXP-20260817-02 GNPR-SID epoch 3 四类泛化 Validation 10k
+
+### 目标、数据与代码状态
+
+- 目标与假设：在四个冻结的 Validation 泛化专项集上评测 GNPR-SID epoch 3，检验其更高 base SID 唯一率能否改善新配对、长尾与冷目标；假设若第一层 Query 可预测性仍是主瓶颈，GNPR 在四组上都不会因静态唯一率较高而超过 TIGER。
+- 数据与 TIGER `EXP-20260817-01` 完全同业务键：`seen_query_unseen_pair`、`unseen_query_seen_target`、`long_tail_target`、`cold_target` 各 10,000 条；三方法逐组业务键 SHA256 一致。
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，运行使用未提交工作树；模型、Tokenizer、数据与评估器指纹保存在各 `result.json`。
+
+### 配置、命令与环境
+
+- checkpoint 固定为 epoch 3 `checkpoint-16167`；无约束 Beam=10、返回 10 个候选、batch 32、chunk 1,000、历史实验 `cutoff_len=512`，不增加合法路径约束。
+- 四个单元在训练平台单卡 RTX 6000D 上并行完成，均为 `completed`、10,000 行。
+
+~~~bash
+python scripts/gnpr/evaluate_retrieval.py \
+  --valid-file data/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/generalization_validation_suite_10k_v1/<subset>_10000.jsonl \
+  --checkpoints outputs/sft/gnpr_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-16167 \
+  --tokenizer models/Qwen3-0.6B-GNPR-Vocab-v1 \
+  --identifier-dir outputs/sid/gnpr_sid/bge_m3_category_pluscode6_full_v1/4x6000d/GNPR-ContentGeo-BGE-M3-512x3/gnpr_ids/epoch_20 \
+  --output-dir outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/gnpr_e3 \
+  --num-beams 10 --per-device-eval-batch-size 32 --chunk-size 1000 --cutoff-len 512 --final-checkpoint-only
+~~~
+
+### 核心结果、审计与结论
+
+| Validation 专项集 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 已见 Query / 未见配对 | 15.09% | 33.01% | 41.54% | 49.76% | 15.09% | 25.5321% | 29.0485% | 31.7397% |
+| 未见 Query / 已见目标 | 41.71% | 56.90% | 61.38% | 65.11% | 41.71% | 50.7151% | 52.5657% | 53.8012% |
+| 长尾目标（Train 1—5） | 15.96% | 24.05% | 27.58% | 31.93% | 15.96% | 20.6570% | 22.1103% | 23.5276% |
+| 冷目标（Train 0） | 3.53% | 3.95% | 4.14% | 4.27% | 3.53% | 3.7754% | 3.8541% | 3.8952% |
+
+- 四组宏平均 HR@1/HR@10/NDCG@10 为 19.0725%/37.7675%/28.2409%，分别比 TIGER 低 5.92/13.6025/9.4540pp。GNPR 在冷目标上的 HR@10 只有 4.27%，高静态唯一率没有转化为长尾或冷启动检索能力。
+- 事后真实 Token 审计的超 512 行数为 `0/8/5/5`，最大总长度为 `476/622/579/545`；单组指标理论最大扰动不超过 0.08pp，远小于与 TIGER 的差距。结果保留为历史 512 口径。
+- 正式产物位于 `outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/gnpr_e3/`。结论与逐层诊断一致：GNPR 的根前缀 Query 可预测性不足，并未因目录唯一率优势改善泛化。

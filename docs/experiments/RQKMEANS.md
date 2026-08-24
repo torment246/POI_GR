@@ -1,18 +1,25 @@
 # RQ-KMeans SID 实验
 
-本文件记录北京全量 POI 上的 RQ-KMeans 构建协议、参数筛选、与 TIGER RQ-VAE 的公平对照，以及相同 30-bit 容量下的非对称码本消融。原始 BGE-M3 与 E4 Query-Augmented Embedding 在对称 `1024³` 下的 RQ-VAE/RQ-KMeans `2×2` 已全部完成；两种输入的三档 30-bit RQ-KMeans 布局也已闭环，并据此冻结下游 SFT 候选。
+本文件记录北京全量 POI 上的 RQ-KMeans 构建协议、参数筛选、与 TIGER RQ-VAE 的公平对照，以及相同 30-bit 容量下的非对称码本消融。原始 BGE-M3 与 E4 Query-Augmented Embedding 在对称 `1024³` 下的 RQ-VAE/RQ-KMeans 静态及下游 `2×2` 均已全部闭环；BGE 三档容量前移布局和 E4 从 `256` 到 `4096` S1 的五档镜像布局也已闭环。固定 Validation 10k 的无约束主结果中，BGE+RQ-KMeans 与 TIGER 基本持平但略低，E4 在两种量化器下均降低 HR/NDCG，没有形成可叠加的下游收益。
 
 ## 1. 当前结论
 
 1. 在完全相同的原始 BGE-M3 输入、POI 行序、三层 `1024×1024×1024` 码本和固定 Validation 划分下，标准贪心 RQ-KMeans 的全量唯一 SID 比例为 76.0725%，高于 TIGER RQ-VAE 的 71.6766%；碰撞 POI 比例从 40.7894% 降至 36.1501%。
 2. 对称 RQ-KMeans 并非无代价地全面优于 RQ-VAE：depth-1/2/3 类别 micro-purity 比 TIGER 分别低 2.2555/0.3917/0.1881 个百分点，最大碰撞桶也从 306 增至 467。
 3. 保持总编码容量均为 30 bit，把码本容量前移到第一层可以修复上述取舍。原始 BGE 的 `4096×1024×256` 唯一率达到 81.8938%，E4 输入进一步达到 82.7331%、碰撞 POI 降至 27.9655%，成为当前纯 SID 结构最优。
-4. 从纯 SID 结构指标看，当前最优是 E4+`4096×1024×256`；从生成模型词表和第一 token 分类难度看，`2048×1024×512` 仍是重要的工程折中候选。二者必须再经过同一 SFT/生成评测后才能确定最终上线布局。
+4. 从纯 SID 结构指标看，当前最优是 E4+`4096×1024×256`；首轮三种生成检索候选已经全部完成，后移 `512×1024×2048` 与前移 `2048×1024×512` 在单 seed 下基本持平，二者都显著优于这次存在独立闭合异常的对称 `1024³`，但都没有在 Top-1/NDCG 上超过 TIGER。
 5. 主论文中的“RQ-KMeans vs RQ-VAE”必须继续使用对称 `1024³` 作为公平算法对照；两个非对称布局只能作为 RQ-KMeans 的容量分配消融，不能替换主对照。
 6. 在完全相同的 TIGER `1024³` 协议下，把输入从原始 BGE 换为冻结 E4 后，唯一 SID 比例由 71.6766% 提升到 74.3539%，碰撞 POI 由 40.7894% 降到 37.4194%，第一层实际使用数由 561 增至 751；但 depth-1/2 类别 micro-purity 分别下降 5.1448/2.3896 个百分点。E4 的收益是“Query 意图区分度与码本展开”，不是静态类别树更纯。
 7. 完整 `2×2` 表明 Embedding 与 Quantizer 的结构收益存在明显重叠，而非近似相加：E4 在 RQ-VAE 下把唯一率提高 2.6774 个百分点，在 RQ-KMeans 下只提高 0.0848 个百分点；但 E4 仍把 RQ-KMeans 最大碰撞桶从 467 降至 288。当前对称配置的全局最优是 E4+RQ-KMeans，唯一率 76.1573%、碰撞 POI 35.7477%，但其主要新增价值是修复长尾碰撞。
 8. E4 的 `4096×1024×256` 迁移验证为正：相对同布局 BGE 唯一率提高 0.8392 个百分点、碰撞 POI 降低 1.1857 个百分点；相对 E4 `1024³` 唯一率提高 6.5758 个百分点。Embedding 与“容量前移”存在正交互，但最大桶仍由 BGE 的 96 增至 E4 的 125，长尾碰撞尚未被完全解决。
-9. E4 `2048×1024×512` 的唯一率/碰撞 POI 为 79.8731%/31.4021%，最大桶为 143，是当前结构收益、基础词表规模和第一 token 难度之间的 Pareto 拐点。正式新增 SFT 候选冻结为 E4-2048 主模型、E4-4096 容量上界和 BGE-2048 同布局 Embedding 消融；E4-1024 被 E4-2048 支配，不进入新增正式 SFT。
+9. E4 `2048×1024×512` 的唯一率/碰撞 POI 为 79.8731%/31.4021%，最大桶为 143，是纯 SID 唯一性与基础词表规模之间的静态 Pareto 拐点；`EXP-20260813-03` 已进一步验证其 epoch-3 HR@1/HR@10/NDCG@10 为 50.47%/87.01%/69.6711%，分别比对称布局高 2.48/3.59/3.2382 个百分点，但仍未全面超过 TIGER。
+10. 容量后移 `512×1024×2048` 和 `256×1024×4096` 的唯一率只有 73.1878%/69.8717%，但 Train 加权有效 S1 分支数从前移布局的 682/1,194 降到 195/112，固定 10k 中低支持 S1 目标也显著减少。当前 SFT 最小矩阵改为 E4 后移-512、对称-1024、前移-2048；两个极端 256/4096 只保留结构边界，BGE 消融等容量方向确定后再做。
+11. 硬类别根节点 `category_code×1024×2048`（实际 `402×1024×2048`）已完成：S1 逐行精确等于 `category_code` 编号，类别 purity 为 100%，但唯一率降至 53.1864%、碰撞 POI 升至 60.2040%。最大类“房产小区:楼栋号”单独包含 507,338 个 POI，其中 91.7972% 仍处于碰撞桶。这证明原始业务类别不是容量均衡的语义树根；该方案作为负向消融保留，不替换三组 SFT 候选。
+12. 对称 `1024³`、容量前移 `2048×1024×512` 与容量后移 `512×1024×2048` 均已完成同一固定普通 Validation 10k、Beam=10、无约束三轮评测和 epoch-3 合法路径约束诊断。后移与前移在两套口径下基本持平，二者都优于本次存在独立闭合异常的对称布局；当前不冻结容量方向的最终胜者。
+13. `EXP-20260813-04` 已定位“静态 SID 更优但 SFT 未超过 TIGER”的主因：全库 POI 等权的碰撞改善没有覆盖评测流量中的热门目标；固定 10k 中 E4 对称/前移的碰撞桶目标占比为 49.29%/41.90%，均高于 TIGER 的 38.54%。E4 的三级 gold-prefix Top-1 累计其实更高，但第四层字典序碰撞码与完整结构生成抵消了收益。后续 SID 筛选必须加入订单加权碰撞和 Query 可预测性，不再只按全库唯一率冻结。
+14. `EXP-20260813-06` 已完成三组 epoch-3 合法路径约束诊断：TIGER、E4 对称、E4 前移的 Valid ID Rate 均变为 100%，HR@10 分别为 87.99%/87.90%/88.08%。E4 对称相对自身无约束 HR@10 提高 4.48pp，确认闭合与非法组合是其重要损失；但约束后三组 Top-10 几乎持平，TIGER HR@1 仍最高，说明约束消除了路径合法性差异，没有解决目标 POI 排序与字典序碰撞码学习问题。该结果是诊断协议，不替换论文复现的无约束主指标。
+15. `EXP-20260814-01` 补齐 E4 后移 `512×1024×2048`：epoch 3 无约束 HR@1/HR@10/NDCG@10 为 50.67%/87.08%/69.8064%，分别比前移高 0.20/0.07/0.1353pp；合法路径约束后为 50.65%/88.12%/70.3083%，其中 HR@10 比前移高 0.04pp，但 HR@1/NDCG@10 低 0.28/0.0988pp。两个方向的差异小于 0.3pp 且排序随解码口径变化，当前不能宣称容量后移或前移稳定胜出。后移在固定 10k 的碰撞桶目标高达 52.77%，但 512 类粗根更易生成；前移降低后段碰撞，却把第一步扩大到 2,048 类。这是明确的自回归可学习性—静态唯一性折中。
+16. `EXP-20260816-02` 已闭合对称 `1024³` 下游 `2×2`：无约束 TIGER 的 HR@1/HR@10/NDCG@10 为 51.87%/87.16%/70.4190%，BGE+RQ-KMeans 为 51.83%/86.72%/70.1553%，E4+RQ-VAE 为 49.81%/86.16%/68.9340%。RQ-KMeans 在 BGE 下与 TIGER 基本持平但没有胜出，E4 在 RQ-VAE 下明确下降；静态唯一率和连续向量召回收益均没有自动转化为生成检索提升。
 
 ## 2. 方法与公开实现依据
 
@@ -437,7 +444,9 @@ E4 的最大桶为 125，差于同布局 BGE 的 96；因此不能写成 E4 全�
 
 固定 10,000 条 Validation 中没有完全未见的 S1，但 Train 支持不超过 1,000 单的目标数量分别为 225、498、1,103；`4096` 相比 `2048` 又把低支持 S1 目标翻倍，同时有效 S1 分支数增加约 75%。所以 `4096` 的额外结构收益很可能伴随更难的第一步分类，必须作为容量上界实测，而不是直接指定为最终模型。
 
-### 11.4 确定的新增 SFT 候选
+### 11.4 当时冻结的新增 SFT 候选（已由 EXP-20260810-02 修订）
+
+> 本节保留 EXP-20260808-08 当时基于静态 SID 指标做出的决策轨迹，不再代表当前执行计划。容量后移实验完成后的有效候选见 14.4。
 
 | 优先级 | Embedding | Quantizer / 布局 | 实验角色 | 决策 |
 |---|---|---|---|---|
@@ -459,8 +468,1080 @@ E4 `1024³` 不进入新增正式 SFT：它相对 E4-2048 少 512 个基础 toke
 | 全量 SID | `sid_codes.npy` / `0618d75054293bc982f2fd51b08fe58b3e1a1fd5f335991888494ccf8bb3e34f` |
 | 全量 metrics | `metrics.json` / `14c9bbbfbbb6808f6c154c3c698e74a0f48d2d83d5ff6ba5a6502c985c08fcb3` |
 
-## 12. 下一步
+## 12. EXP-20260808-08 当时的下一步（已修订）
 
-1. 按同一 TIGER collision-token 协议为三组新增候选构建全局唯一 identifier、Tokenizer 与训练数据；先做映射确定性和目标无截断验证。
-2. 先训练 E4-2048 主模型和 E4-4096 容量上界，用逐层 Teacher-Forcing 尽早判断 S1 难度；两者完成后再训练 BGE-2048 同布局消融。
-3. 最终候选由完整 identifier HR/NDCG、合法率、词表开销和时延共同确定。只在胜出布局上追加碰撞桶局部图/GID/Dedup 创新，不在本轮量化器主实验中混入第二变量。
+EXP-20260808-08 曾计划直接训练容量前移和 Embedding 消融，但该计划在 identifier 构建前被“自回归 SID 应粗到细”的容量方向疑问暂停，因此没有执行。EXP-20260810-01/02 补齐镜像容量后移后，当前有效计划以 14.4 的三组 E4 容量方向 SFT 为准；Embedding 消融顺延到胜出布局。
+
+## 13. EXP-20260810-01：E4 容量后移 `512×1024×2048`
+
+### 13.1 目标与协议
+
+针对自回归 SID 应由粗到细生成的假设，本实验把 E4 `2048×1024×512` 完全镜像为 `512×1024×2048`。两者的码本乘积均为 $2^{30}$，基础 SID Token 总数均为 3,584；Embedding、500,000 条冻结 K-Means 样本、Validation 划分、20 次迭代、3 次重启、seed、GPU backend 和全量评测协议均保持不变，唯一变量是容量分配方向。
+
+代码基于 dirty worktree、提交 `7dd52b3437a9db41834aef638e446010d0df3610` 运行。正式命令为：
+
+```bash
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/sid/build_rqkmeans.py \
+  --config configs/sid/rqkmeans_e4_bge_m3_1024x3.yaml \
+  --output-dir outputs/sid/rqkmeans/e4_bge_m3/gpu_greedy_512x1024x2048_s500k_i20_r3 \
+  --codebook-sizes 512,1024,2048 \
+  --no-progress
+```
+
+任务于 2026-08-10 16:50:11—16:56:34 在开发机单卡 RTX A6000 48 GB 上完成，退出码为 0，未发生 OOM。Embedding 使用 mmap、全量编码按 8,192 行分块，GPU 临时内存上限为 512 MiB；运行日志、缓存与临时文件均位于项目 `outputs/` 下。
+
+### 13.2 全量结果
+
+| 布局 | 唯一 SID | 碰撞 POI | Excess collision | P99 桶 | 最大桶 | D1/D2/D3 micro-purity | 重构 MSE | 重构 cosine |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 后移 `512×1024×2048` | 73.1878% | 39.1444% | 26.8122% | 6 | 485 | 60.6237% / 70.7879% / 94.6271% | 0.000210890 | 0.885169 |
+| 对称 `1024³` | 76.1573% | 35.7477% | 23.8427% | 6 | 288 | 61.7668% / 74.1673% / 95.4859% | 0.000210964 | 0.885044 |
+| 前移 `2048×1024×512` | 79.8731% | 31.4021% | 20.1269% | 5 | 143 | 63.1348% / 78.1489% / 96.4413% | 0.000207547 | 0.886944 |
+
+后移相对同成本前移布局的唯一率降低 6.6853 个百分点、碰撞 POI 增加 7.7423 个百分点，最大桶从 143 增至 485；相对对称布局也分别恶化 2.9695/3.3967 个百分点。三个码本在 500,000 条训练样本和全量 POI 上均为 100% 利用率，因此差异不是码本失活造成的。
+
+各层全量 normalized entropy 为 0.97294/0.95247/0.92541。容量后移确实把第一步候选数降到 512，但更粗的 S1 使后续 residual K-Means 没能完全恢复早期混合：depth-2 前缀 P99/最大桶达到 77/983，完整 SID 最大桶仍为 485；depth-2 micro-purity 比镜像前移低 7.3610 个百分点。重构误差只比前移高约 1.61%，远小于碰撞差距，说明主要问题是离散路径分配和热点桶，而非连续向量重构明显失败。
+
+结论：`512×1024×2048` 验证了容量后移会减少第一步类别数，但静态 SID 结构明显退化；它是否因更易预测的 S1 在下游反超，不能由本实验单独判断。该布局暂保留为粗到细 SFT 候选/方向消融，不替换现有纯 SID 结构最优。下一步继续运行同成本极端镜像 `256×1024×4096`，再统一分析 Train/Validation 的 S1 可学习性并冻结 SFT 最小矩阵。
+
+### 13.3 产物
+
+| 产物 | 路径 / SHA256 |
+|---|---|
+| 完整目录 | `outputs/sid/rqkmeans/e4_bge_m3/gpu_greedy_512x1024x2048_s500k_i20_r3/` |
+| 运行日志与退出码 | `outputs/run_control/rqkmeans_e4_bge_m3_512x1024x2048/` / `0` |
+| Resolved config signature | `feff93fe886a28099921fc6114c6ed1656765b581e9236a2d26ac334ac1ff37d` |
+| 全量 SID | `sid_codes.npy` / `0f1fab4cb3ec1d957d0fd73dffa62b547c94bdbf4acb9fdcb4dcb7847336719f` |
+| 全量 metrics | `metrics.json` / `c20465bfd4a82707a102c4c75d034e4b930c22a9aec1e9d568a2a0b613c5ee47` |
+
+## 14. EXP-20260810-02：E4 极端容量后移 `256×1024×4096` 与候选修订
+
+### 14.1 目标与协议
+
+本实验把纯 SID 结构最优 `4096×1024×256` 完全镜像为 `256×1024×4096`。两者的码本乘积均为 $2^{30}$，基础 SID Token 总数均为 5,376；输入、冻结样本与 Validation、K-Means 参数和评测协议与 EXP-20260810-01 相同。
+
+```bash
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/sid/build_rqkmeans.py \
+  --config configs/sid/rqkmeans_e4_bge_m3_1024x3.yaml \
+  --output-dir outputs/sid/rqkmeans/e4_bge_m3/gpu_greedy_256x1024x4096_s500k_i20_r3 \
+  --codebook-sizes 256,1024,4096 \
+  --no-progress
+```
+
+代码基于 dirty worktree、提交 `7dd52b3437a9db41834aef638e446010d0df3610`。任务于 2026-08-10 17:02:29—17:08:35 在开发机单卡 RTX A6000 48 GB 上完成，退出码为 0，未发生 OOM；mmap、8,192 行分块、512 MiB GPU 临时内存和项目内临时目录协议保持不变。
+
+### 14.2 五档 E4 30-bit 布局
+
+| 容量方向 | E4 布局 | 唯一 SID | 碰撞 POI | P99 桶 | 最大桶 | D1/D2/D3 micro-purity | 重构 MSE |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 极端后移 | `256×1024×4096` | 69.8717% | 42.8991% | 7 | 580 | 58.0219% / 67.7835% / 93.7161% | 0.000208064 |
+| 后移 | `512×1024×2048` | 73.1878% | 39.1444% | 6 | 485 | 60.6237% / 70.7879% / 94.6271% | 0.000210890 |
+| 对称 | `1024×1024×1024` | 76.1573% | 35.7477% | 6 | 288 | 61.7668% / 74.1673% / 95.4859% | 0.000210964 |
+| 前移 | `2048×1024×512` | 79.8731% | 31.4021% | 5 | 143 | 63.1348% / 78.1489% / 96.4413% | 0.000207547 |
+| 极端前移 | `4096×1024×256` | 82.7331% | 27.9655% | 4 | 125 | 63.6370% / 81.3855% / 96.8838% | 0.000201403 |
+
+极端后移相对同成本极端前移的唯一率降低 12.8614 个百分点、碰撞 POI 增加 14.9336 个百分点，最大桶从 125 增至 580；depth-1/2/3 micro-purity 分别降低 5.6151/13.6021/3.1677 个百分点。它相对后移-512 也被静态结构全面支配：唯一率低 3.3161 个百分点、碰撞 POI 高 3.7547 个百分点、最大桶更大。
+
+但极端后移的重构 MSE 为 0.000208064，优于后移-512 和对称布局，三个码本也全部 100% 使用。由此可以排除“后移只是重构失败或死码”的解释：顺序 residual K-Means 可以用大 L3 恢复连续向量，却无法恢复细 S1 对组合路径均匀性和类别分离的作用。随着容量逐步前移，唯一率、碰撞、最大桶和各层类别纯度基本单调改善。
+
+### 14.3 Train 标签难度与固定 10k 支持
+
+使用 7,586,410 条 Train query-target 订单按目标 POI 加权：
+
+| 布局 | $H(S_1)$ | 有效 S1 分支 | $H(S_2\mid S_1)$ | $H(S_3\mid S_{1:2})$ | $H(S_{1:3})$ | 固定 10k 中 S1 Train 支持 $\le 1000$ |
+|---|---:|---:|---:|---:|---:|---:|
+| `256×1024×4096` | 6.8106 | 112.3 | 6.4936 | 1.7659 | 15.0701 | 17 |
+| `512×1024×2048` | 7.6059 | 194.8 | 6.0613 | 1.4838 | 15.1510 | 85 |
+| `1024³` | 8.5439 | 373.2 | 5.5170 | 1.1841 | 15.2450 | 225 |
+| `2048×1024×512` | 9.4141 | 682.2 | 4.9869 | 0.9485 | 15.3495 | 498 |
+| `4096×1024×256` | 10.2215 | 1,193.9 | 4.4830 | 0.7387 | 15.4432 | 1,103 |
+
+五档在固定 10k 中都没有完全未见的 S1。容量后移明确降低了第一步标签熵和长尾稀疏性：后移-512 相对前移-2048 的有效 S1 分支减少 71.4%，低支持目标从 498 降至 85；极端后移进一步降到 112 个有效分支和 17 个低支持目标。
+
+代价同样明确：难度不是消失，而是从 S1 转移到后两层，同时完整路径熵下降、碰撞增加。极端后移 S1 的最大 Train 订单支持达到 471,389，depth-1 类别 micro-purity只有 58.02%，说明少数粗前缀聚合了大量异质 Query/POI。它可能让 S1 Top-1 很高，却未必提高完整 identifier HR。
+
+### 14.4 修订后的 SFT 最小矩阵
+
+| 优先级 | E4 布局 | 实验角色 | 决策 |
+|---|---|---|---|
+| P0 | `512×1024×2048` | 粗到细容量后移主假设 | 进入 SFT；检验更容易的 S1 能否抵消更高碰撞和后层难度 |
+| P0 | `2048×1024×512` | 同词表、同总容量的反向对照 | 进入 SFT；与后移-512 构成最严格方向消融 |
+| P0 | `1024×1024×1024` | 中性容量基线 | 进入 SFT；判断最优点是否位于两种方向之间 |
+| 边界 | `256×1024×4096` | 极端后移 | 不进入首轮 SFT；静态结构被后移-512 支配，仅保留边界证据 |
+| 边界 | `4096×1024×256` | 极端前移 / 纯 SID 上界 | 不进入首轮 SFT；S1 稀疏性最强，仅保留边界证据 |
+
+此前冻结的 BGE-2048 Embedding 消融顺延：先用三组 E4 确定容量方向，再在胜出布局上替换为原始 BGE，才能避免同时改变 Embedding 和布局。已有 BGE+TIGER RQ-VAE `1024³` epoch 3 继续作为复用强基线。
+
+三组首轮 SFT 必须统一 TIGER collision-token 唯一化、Tokenizer、Qwen3-0.6B、数据切分、训练轮数、Beam 与 Trie 协议。主要判断顺序为：S1 Top-1/Top-5、逐层 gold-prefix Teacher-Forcing、完整 identifier HR@1/3/5/10 与 NDCG@10、合法率、碰撞后缀准确率和解码时延。不能再用 SID 唯一率单独冻结生成候选。
+
+### 14.5 产物
+
+| 产物 | 路径 / SHA256 |
+|---|---|
+| 完整目录 | `outputs/sid/rqkmeans/e4_bge_m3/gpu_greedy_256x1024x4096_s500k_i20_r3/` |
+| 运行日志与退出码 | `outputs/run_control/rqkmeans_e4_bge_m3_256x1024x4096/` / `0` |
+| Resolved config signature | `8aba17549efa854b8fe9b1f75183cdb6d78e2081c30b93e6c4867489f4eeb95a` |
+| 全量 SID | `sid_codes.npy` / `498114dcf24b6cdabcc490cd2c62fad0056e762a8ae5a87baf64a988c98ad7bf` |
+| 全量 metrics | `metrics.json` / `1ca198352a951f81a93e16117cb4a81c740fe342555448c934785017b326f5f0` |
+
+## 15. EXP-20260810-03：第一层硬对齐 `category_code`
+
+### 15.1 目标与方法
+
+本实验检验“让自回归第一个 token 具有完全明确的类别语义”能否改善 SID。北京全量 POI 共有 402 个非空 `category_code`，因此布局固定为 `402×1024×2048`。设 POI $x_i$ 的类别编号为 $g_i$，且 $\mathcal{V}$ 为冻结 Validation 行集。第一层不执行 K-Means，而是在非 Validation POI 上计算类别质心：
+
+$$
+\mu_g=\frac{1}{\left|\{i:i\notin\mathcal{V},g_i=g\}\right|}
+\sum_{i:i\notin\mathcal{V},g_i=g}x_i
+$$
+
+$$
+S_1(x_i)=g_i,\qquad r_1(x_i)=x_i-\mu_{g_i}
+$$
+
+$S_2$ 和 $S_3$ 继续在固定 500,000 条 Train-only 样本上使用标准全局 sequential residual K-Means。全量编码也强制 $S_1=g_i$，不允许通过最近质心重新分配类别。由于 402 不是 2 的幂，该布局的理论容量为：
+
+$$
+\log_2 402+\log_2 1024+\log_2 2048
+=29.6511\ \text{bit}
+$$
+
+它与 `512×1024×2048` 共享相同的 S2/S3、Embedding、冻结划分、GPU K-Means 参数和全量 evaluator，但不是严格等 30-bit 容量对照。正式配置与命令为：
+
+```bash
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/sid/build_rqkmeans.py \
+  --config configs/sid/rqkmeans_e4_category_code_402x1024x2048.yaml \
+  --no-progress
+```
+
+任务于 2026-08-10 17:40:58—17:47:15 在开发机单卡 RTX A6000 48 GB 上完成，退出码为 0，未发生 OOM。Embedding 使用 mmap，类别质心和全量编码均按 8,192 行分块；运行缓存全部位于项目 `outputs/tmp/category_first_run/`。
+
+### 15.2 强约束校验
+
+- 2,337,178 条 POI 均找到非空 `category_code`，实际类别数为 402；
+- 402 类在非 Validation 训练集中全部有样本；50 万固定 K-Means 样本覆盖 387 类，其余 15 类仍使用全量非 Validation POI 计算质心；
+- 导出 `sid_codes.npy` 的 shape/dtype 为 `[2337178,3]` / `int32`，三层范围为 `0–401` / `0–1023` / `0–2047`；
+- 逐行校验 `sid_codes[:,0] == category_ids[:]` 为 True，depth-1 micro/macro category purity 均为 100%；
+- S2/S3 在 50 万样本和全量 POI 上都使用了全部 1,024/2,048 个 token，因此结果退化不是全局死码造成的。
+
+### 15.3 全量结果
+
+| 布局 | 唯一 SID | 碰撞 POI | Excess collision | P99 桶 | 最大桶 | D1/D2/D3 micro-purity | 重构 MSE/维 | 重构 cosine |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **硬类别 `402×1024×2048`** | **53.1864%** | **60.2040%** | **46.8136%** | **14** | **601** | **100% / 100% / 100%** | **0.000232314** | **0.872608** |
+| 普通后移 `512×1024×2048` | 73.1878% | 39.1444% | 26.8122% | 6 | 485 | 60.6237% / 70.7879% / 94.6271% | 0.000210890 | 0.885169 |
+| 对称 `1024³` | 76.1573% | 35.7477% | 23.8427% | 6 | 288 | 61.7668% / 74.1673% / 95.4859% | 0.000210964 | 0.885044 |
+
+硬类别方案相对最接近的普通后移-512，唯一率下降 20.0014 个百分点，碰撞 POI 增加 21.0596 个百分点，不能用少 0.3489 bit 的理论容量差单独解释。S1 全量归一化熵只有 0.6272，远低于普通后移-512 的 0.9729；硬类别带来的 100% purity 是由编码约束直接保证的，不表示路径容量利用良好。
+
+主要失败集中在大类：
+
+| `category_code` | 类别 | POI | Depth-2 分支 | 唯一完整 SID | 类内唯一率 | 类内碰撞 POI | 最大桶 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `282000` | 房产小区:楼栋号 | 507,338 | 949 | 110,847 | 21.849% | 91.797% | 601 |
+| `801010` | 室内及附属设施:通行设施类:门/出入口 | 196,932 | 998 | 77,380 | 39.293% | 77.615% | 138 |
+| `111000` | 公司企业:公司企业 | 191,003 | 984 | 100,088 | 52.401% | 65.269% | 142 |
+| `261500` | 地名地址:门牌信息 | 134,559 | 867 | 46,551 | 34.595% | 80.721% | 227 |
+
+仅 `282000` 就产生 396,491 条 excess collision，占全局 1,094,116 条的 36.24%。业务类别是高度不均衡的标签分区，不是为压缩和唯一性优化的分层聚类；把 50.7 万个楼栋号先硬合并到同一根节点后，后续共享的全局残差码本无法充分恢复这一步造成的路径失衡。
+
+### 15.4 自回归标签难度与决策
+
+| 布局 | $H(S_1)$ | 有效 S1 分支 | $H(S_2\mid S_1)$ | $H(S_3\mid S_{1:2})$ | $H(S_{1:3})$ | 固定 10k 中 S1 Train 支持 $\le 1000$ |
+|---|---:|---:|---:|---:|---:|---:|
+| 硬类别 `402×1024×2048` | 6.1446 | 70.7 | 6.9381 | 2.0524 | 15.1351 | 58 |
+| 普通后移 `512×1024×2048` | 7.6059 | 194.8 | 6.0613 | 1.4838 | 15.1510 | 85 |
+| 极端后移 `256×1024×4096` | 6.8106 | 112.3 | 6.4936 | 1.7659 | 15.0701 | 17 |
+
+硬类别确实进一步降低了第一 token 熵，但最大 S1 的 Train 订单支持达 1,260,050，难度大量转移到了 S2/S3 和碰撞后缀。它的静态 SID 结构甚至显著差于极端后移-256，因此不进入首轮 SFT 主候选，现有后移-512/对称-1024/前移-2048 三组矩阵不变。
+
+该结果否决的是“原始 `category_code` 直接作为硬 S1，后面接全局 RQ-KMeans”，而不是否决类别信息本身。若继续类别感知 SID，下一个有意义的算法不是再调全局 S2/S3 迭代数，而是下列二选一：
+
+1. 把类别作为辅助监督或软约束，保留容量均衡的 K-Means S1；
+2. 使用类别条件化、按类别规模分配分支的局部树，让大类获得更多子分支，稀有类共享较少容量。
+
+后者才是对本次失败机制的直接修复，但它将从 residual quantization 转向 category-conditioned hierarchical quantization，必须作为独立方法实验，不与当前 RQ-KMeans 公平对照混合。
+
+### 15.5 产物
+
+| 产物 | 路径 / SHA256 |
+|---|---|
+| 正式配置 | `configs/sid/rqkmeans_e4_category_code_402x1024x2048.yaml` |
+| 完整目录 | `outputs/sid/rqkmeans/e4_bge_m3/gpu_category_402x1024x2048_s500k_i20_r3/` |
+| Resolved config signature | `d35ccf124861918863e8ecc8f8da17f88c142212d489445fa116b59c21788a81` |
+| 全量 SID | `sid_codes.npy` / `4c6cff940fbf5344dcb62a7c36dc85e49325adef13f109c845a5737daa666d68` |
+| 类别行对齐 | `category_ids.npy` / `1a0c9dd24cee9c9086cb6441b7c5a6501c79628fd101966358492ed701e49f67` |
+| 类别词表 | `category_vocab.json` / `48be993f96b16a08eb0178e4e24b8126348508eb924732bd6255aea223b6119a` |
+| 全量 metrics | `metrics.json` / `05385d90aede348d0f36fd45c601adb3ee5f5067fcb70982e3c3c187613689db` |
+
+## 16. EXP-20260811-02：三组 E4 RQ-KMeans SFT Messages 与训练准备
+
+### 16.1 目标与冻结协议
+
+本阶段把第 14.4 节冻结的三组 E4 容量方向候选转成可直接进入 Tokenizer/Cache 阶段的正式 SFT Messages 数据。为了让后续结果能够与现有 TIGER epoch 3 直接比较，除 item identifier 外不改变任何数据变量：
+
+- Train/Valid/Test 仍为 2026-07-01—12、07-13、07-14；历史窗口仍为 2026-04-01—06-30，最多 10 条；
+- 历史事件输入为请求 Geohash6 GID、原始 Query、四 token POI identifier；当前请求输入只有请求 GID 和原始 Query；
+- Assistant 目标不含目标 POI 的 GID，固定为 `[S1,S2,S3,C]`；
+- 对每个三层 SID 桶 $B_s$，按 `poi_id` 字典序确定第四层：
+
+$$
+C(p_i)=\operatorname{rank}_{\mathrm{lex}}(p_i\mid p_i\in B_s),
+\qquad C(p_i)\in\{0,\ldots,|B_s|-1\}
+$$
+
+- 单例桶也显式追加 `C0`，不使用变长 target，不加入 POI GID、局部图或新的碰撞创新。
+
+现有 TIGER SFT 构建器原先把三层码本硬校验为 `1024³`。本实验把它改成显式 `--base-codebook-sizes` 校验，默认值仍为 `1024,1024,1024`，因此既有 TIGER 调用行为不变；新增非对称码本接受与错配拒绝测试后，`tests.tiger.test_data + tests.tiger.test_identifier` 共 12 项通过。
+
+### 16.2 四层 identifier
+
+| E4 RQ-KMeans 布局 | 基础 SID 唯一率 | 碰撞 POI | 最大桶 / `C` 容量 | 四层 ID 唯一率 | Mapping SHA256 |
+|---|---:|---:|---:|---:|---|
+| `512×1024×2048` | 73.1878% | 914,875 | 485 / 485 | 100% | `627526a4c5cdfee6d22c6f8d23a53e673011c05b343d7ff41f098e7f9a1ba0bd` |
+| `1024×1024×1024` | 76.1573% | 835,487 | 288 / 288 | 100% | `a1583334b9a32f43444e127626fb298bab272598904849ab65bd005ae9a3aba7` |
+| `2048×1024×512` | 79.8731% | 733,923 | 143 / 143 | 100% | `639fcdb12b76ef98f1eacc9289adfc575ebcb59f7c495c2172092e496f9a5580` |
+
+三份 mapping 均覆盖同一组 2,337,178 个 POI，输入 POI ID SHA256 均为 `b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7`。正式 identifier 目录为：
+
+- `outputs/pid/rqkmeans/e4_bge_m3/512x1024x2048_tiger_collision_v1/`；
+- `outputs/pid/rqkmeans/e4_bge_m3/1024x1024x1024_tiger_collision_v1/`；
+- `outputs/pid/rqkmeans/e4_bge_m3/2048x1024x512_tiger_collision_v1/`。
+
+### 16.3 全量 Messages 数据
+
+三组数据均完整扫描 32 个 003 分片，扫描并保留 8,790,513 条订单，空 Query 为 0；Train/Valid/Test 均为 7,586,410/597,421/606,682，历史覆盖率为 72.0156605%，平均历史长度为 4.915318。构建使用项目目录内临时目录、逐行流式读取和原子目录替换，没有使用系统临时目录。
+
+| 布局 | 数据目录 | 四层 Token 容量 | 特殊 Token 数 | Manifest SHA256 |
+|---|---|---:|---:|---|
+| `512×1024×2048` | `data/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1/` | `512/1024/2048/485` | 6,117 | `fd210c8f248022d4f442eb6753c9542c11ee367efbcc0864caca1420c685579d` |
+| `1024×1024×1024` | `data/sft/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1/` | `1024/1024/1024/288` | 5,408 | `fd38c5d6367cc982c2ac214c7bd28cfb24d66a13a2d6d514f241743c68850ee9` |
+| `2048×1024×512` | `data/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1/` | `2048/1024/512/143` | 5,775 | `f5cce415ba3159c940073edf43f3e2230c5a02109ce785c3075436b86b02d80c` |
+
+三份 `stats.json` SHA256 完全相同，均为 `3e43d18c95bdbe5e4283260646a26973e802a78de92d337807148a902f6c699a`。进一步对 Train/Valid/Test 各取首尾两条，与 `data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/` 一起把四层 identifier 归一化为占位符后计算 SHA256；四个方法在每个切分内均完全一致。这项抽样验证说明业务样本、顺序、Query、请求 GID、历史和用户哈希未随 SID 变更。
+
+### 16.4 独立 Tokenizer 与扩词表模型
+
+三种布局不能共享扩词表模型：虽然结构 token 和用户 token 相同，S1/S2/S3 的容量以及最大碰撞 token 均不同。本轮从同一个 `models/Qwen3-0.6B/` 基础模型分别扩词，并保持输入 Embedding 与 LM Head 权重绑定；所有新增 token 均以普通 token 注册。保存后重新加载三个 Tokenizer，对全部新增 token 逐个验证“编码为恰好一个 ID、解码回原字符串、不是 special token”，结果全部通过。
+
+| 布局 | 扩词表模型 | 新增 Token / 最终词表 | Mapping SHA256 | Tokenizer SHA256 |
+|---|---|---:|---|---|
+| `512×1024×2048` | `models/Qwen3-0.6B-RQKMeans-E4-512x1024x2048-Vocab-v1/` | 6,117 / 157,786 | `03b4641437048e29844b58e63854f55b14f59089aaea1a46f85e11c002857523` | `ab331800ff00555b9834601fab4b053f2cb26aec41c36ae0315392a39793bf67` |
+| `1024×1024×1024` | `models/Qwen3-0.6B-RQKMeans-E4-1024x1024x1024-Vocab-v1/` | 5,408 / 157,077 | `3583c24ea23f4edfe97e8d90cebcd60acdc73f14b69b335cf2b0412844729f1c` | `5236fc5bd8315b872c3a62c1df03d6e085b7a2e7b5e204d31369569b58d40037` |
+| `2048×1024×512` | `models/Qwen3-0.6B-RQKMeans-E4-2048x1024x512-Vocab-v1/` | 5,775 / 157,444 | `f2727692ead615aa02e9c8e492dd1a4c3d8b5c16f7c1f08aeb63367f97f38e1c` | `0bc09c117f4b8ca1d3aa52e78c15b2f4b58bbaa184f3a23c097b1bd8802576f7` |
+
+### 16.5 长度门禁与 packed Cache
+
+三组 Train/Validation 均使用 `qwen3_nothink`、`train_on_prompt=false`、`packing=true` 和 `cutoff_len=512`。三者的 Prompt 完全相同，Assistant 都是固定四个 identifier token；加上模板控制 token 后，目标长度 P50/P90/P95/P99/Max 均为 8。未截断总长度 P50/P90/P95/P99/P99.9/Max 为 152/307/315/348/456/953，共 2,302 条超过 512，但 LLaMA-Factory 的 source/target 分配仍保留全部目标，因此 Assistant 目标截断数为 0。
+
+| 布局 | 正式 Cache | packed Train / Valid | smoke Train / Valid | Cache Manifest SHA256 |
+|---|---|---:|---:|---|
+| `512×1024×2048` | `data/sft/tokenized/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1/` | 2,851,757 / 208,686 | 3,786 / 697 | `ec210f161c5a583d6ad343d69c160d2f5b68f00dbcc42fbc6b4688d97096c986` |
+| `1024×1024×1024` | `data/sft/tokenized/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1/` | 2,851,757 / 208,686 | 3,786 / 697 | `480dc606a35e05480b816eac7af2bc4835549fd6489224b463fa55d9813cf1dd` |
+| `2048×1024×512` | `data/sft/tokenized/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1/` | 2,851,757 / 208,686 | 3,786 / 697 | `86e371a1a84157d5666ff037d1c099f0a75159ee9213d344c62761572164ec6c` |
+
+每个正式 Cache 约 31 GiB，Schema 为 `poi-sft-tokenized-v1`，LLaMA-Factory/Transformers 版本为 0.9.4/4.52.4；Test 没有进入预处理。三个 Cache 均用 `datasets.load_from_disk` 重新打开，并抽查 Train/Validation 的首、中、尾 packed 行：长度均为 512，labels 含有效监督 token，附加多模态列均为空。三者 packed 行数相同是预期结果，因为布局只改变原子 identifier token 的取值，不改变样本数和目标 token 数。
+
+等价的可复现构建入口如下；`layout`、模型目录和 token 数使用上表中的对应值，实际三组都以 4 个 CPU worker 构建。全部临时文件和 Hugging Face Cache 均位于项目 `data/sft/tokenized/` 或 `outputs/tmp/`，未使用系统临时目录。第一次在受限沙箱中启动多进程时因本地 Manager socket 权限失败，保留已完成的长度预检后在服务器环境重启；这不是 OOM，三组正式任务最终均 exit 0，失败的 `.building-*` 临时目录已清理。
+
+~~~bash
+export TMPDIR="$(pwd)/outputs/tmp/sft_runtime/cache_build"
+
+python scripts/pid/prepare_vocab.py \
+  --model-dir models/Qwen3-0.6B \
+  --tokens data/sft/rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1/special_tokens.json \
+  --output-dir "${expanded_model}" \
+  --expected-token-count "${token_count}" \
+  --mapping-filename poi_token_mapping.json \
+  --schema-version rqkmeans-e4-tiger-vocab-v1
+
+python scripts/sft/validate_tokenization.py \
+  --model-dir "${expanded_model}" \
+  --train-file data/sft/rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1/train.jsonl \
+  --valid-file data/sft/rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1/valid.jsonl \
+  --output-dir data/sft/tokenized/rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1 \
+  --dataset-dir configs/sft --cutoff-len 512 --batch-size 4096 \
+  --workers 4 --preprocessing-batch-size 1000 \
+  --train-dataset rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1_train \
+  --valid-dataset rqkmeans_e4_bge_m3_${layout}_history10_query_gid_tiger_collision_v1_valid \
+  --mapping-filename poi_token_mapping.json \
+  --smoke-train-rows 10000 --smoke-valid-rows 2000
+~~~
+
+### 16.6 同协议 SFT 配置与平台入口
+
+三组配置均为 Qwen3-0.6B 全参数 BF16 SFT、3 epoch、学习率 `5e-5`、cosine、warmup ratio 0.03、每 epoch 保存和验证、保留三个完整 checkpoint。四卡协议固定为：
+
+$$
+B_{\mathrm{global}}=B_{\mathrm{gpu}}\times A\times N_{\mathrm{gpu}}
+=16\times8\times4=512.
+$$
+
+配置文件为：
+
+- `configs/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1.yaml`；
+- `configs/sft/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1.yaml`；
+- `configs/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1.yaml`。
+
+每种布局各有四卡 A100 和四卡 RTX PRO 6000D 两个前台入口，共六个脚本：
+
+- `launchers/run_train_rqkmeans_e4_512x1024x2048_sft_{4a100,4x6000d}_3epoch.sh`；
+- `launchers/run_train_rqkmeans_e4_1024x1024x1024_sft_{4a100,4x6000d}_3epoch.sh`；
+- `launchers/run_train_rqkmeans_e4_2048x1024x512_sft_{4a100,4x6000d}_3epoch.sh`。
+
+六个入口均显式激活 `poi-gr` 环境、检查恰好四张目标型号 GPU、验证模型 mapping 与 Cache Manifest、使用不同 master port 和不同 output 目录。首次 A100 启动把 `TMPDIR` 设为包含完整实验名的 141 字节项目路径，PyTorch DataLoader 创建 multiprocessing socket 时触发 `OSError: AF_UNIX path too long`，任务在第一个 step 前停止，没有 checkpoint；该故障不是 OOM。六个入口现已分别使用 `outputs/tmp/rk512a`、`rk512d`、`rk1024a`、`rk1024d`、`rk2048a`、`rk2048d`，绝对路径为 51—52 字节，并加入不超过 64 字节的启动门禁。六种组合的 `scripts/sft/train.py --dry_run 1` 均 exit 0，解析出的 global batch 均为 512；相关单元测试、六个脚本的 `bash -n`、Python `compileall`、两份数据注册 JSON 的解析与逐字节一致性全部通过。
+
+### 16.7 决策与下一步
+
+三组候选现在已经满足正式 SFT 启动门禁。每个布局只应在 A100 或 6000D 中选择一个可用平台入口，不能把同一布局的两个硬件脚本重复训练后择优；若只有一个四卡节点则顺序运行，若有三个独立四卡资源才并行运行三组。当前尚未启动正式 SFT。
+
+训练完成后首先按固定 10,000 条 Validation 和统一 Beam 协议比较 S1 Top-1/Top-5、逐层 Teacher-Forcing、完整 ID HR/NDCG、合法率、碰撞后缀准确率和时延。TIGER epoch 3 继续作为不重复训练的 RQ-VAE 强基线；三组 RQ-KMeans 的下游胜者再补原始 BGE Embedding 消融。
+
+## 17. EXP-20260813-02：E4 RQ-KMeans 对称 `1024×1024×1024` 三轮 SFT 与固定 10k 评测
+
+### 17.1 目标与假设
+
+本实验验证 E4 Query 增强向量在对称 `1024³` RQ-KMeans identifier 上能否把静态 SID 收益传递到生成检索。除三层 SID 及其碰撞后缀外，模型、Messages 样本、Prompt、历史窗口、训练超参数和评测业务键均与 TIGER 对照保持一致。假设是 E4+RQ-KMeans 的更高基础 SID 唯一率能够减少碰撞后缀难度，并改善固定 Validation 的无约束生成指标。
+
+### 17.2 数据、代码与配置
+
+- 数据版本：`data/sft/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1/`，Train/Valid/Test 为 7,586,410/597,421/606,682；固定评测仍使用历史普通 Validation 10,000 条业务键，不使用复杂地理 Query 子集；
+- identifier：`outputs/pid/rqkmeans/e4_bge_m3/1024x1024x1024_tiger_collision_v1/`，容量为 `[1024,1024,1024,288]`，2,337,178 条四层 ID 全局唯一，mapping SHA256 为 `a1583334b9a32f43444e127626fb298bab272598904849ab65bd005ae9a3aba7`；
+- 代码基线：`7dd52b3437a9db41834aef638e446010d0df3610`；运行和评测时工作树含本方法尚未提交的容量适配、配置及其他在研改动；评测产物额外冻结 evaluator/method SHA256 为 `da979a9ada1208a2004b64c4d2c0e36d4554ccb316b15505807cef4ea0739e91` / `9a17aea1eddd027915e5c5c6b2a77407e23d74e07de15f15cade7f3e6cbc1861`；
+- SFT 配置：`configs/sft/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1.yaml`；Qwen3-0.6B 全参数 BF16、3 epoch、`lr=5e-5`、cosine、warmup ratio 0.03、packing、cutoff 512，四卡 global batch 为 512；
+- 训练环境与命令：训练平台 4×A100，入口为 `bash launchers/run_train_rqkmeans_e4_1024x1024x1024_sft_4a100_3epoch.sh`；三轮共 16,710 step，训练正常完成，train loss 0.426557，runtime 72,257.51 秒，吞吐 118.400 samples/s；
+- 评测环境与命令：开发机 RTX A6000，`/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/evaluate_retrieval.py`；参数为三个 checkpoint `5570/11140/16710`、专属 Tokenizer、上述 identifier、固定普通 Validation 10k、Beam=10、batch 32、chunk 1000、cutoff 512。解码为无约束 Beam Search，未使用 Trie 或地理裁剪，无效 ID 保留原 Beam 排名并计 miss。
+
+### 17.3 正式结果
+
+固定业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，与 TIGER 历史固定子集一致；10,000 条目标 POI mismatch 为 0。三个 checkpoint 均完整评测 10,000 条，实际 batch size 均为 32。
+
+| Epoch | Val Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID Rate |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.390831 | 42.87% | 67.01% | 73.49% | 79.42% | 42.87% | 57.1200% | 59.7929% | 61.7393% | 63.606% |
+| 2 | 0.322007 | 46.56% | 70.80% | 77.34% | 82.70% | 46.56% | 60.9254% | 63.6303% | 65.3868% | 65.609% |
+| **3** | **0.315315** | **47.99%** | **71.52%** | **78.35%** | **83.42%** | **47.99%** | **61.9376%** | **64.7678%** | **66.4329%** | **66.102%** |
+
+epoch 3 按 NDCG@10 最优，但相对 TIGER epoch 3 的 HR@1/HR@10/NDCG@10 仍低 3.88/3.74/3.9861 个百分点，Valid ID Rate 低 8.003 个百分点。E4 对称 RQ-KMeans 的静态 SID 唯一性提升没有自动转化为更好的自回归检索，且无效完整路径仍是主要损失来源。
+
+### 17.4 产物与结论
+
+- 训练目录：`outputs/sft/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/`；
+- 评测目录：`outputs/eval/rqkmeans_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/`；
+- 汇总 JSON/CSV SHA256：`be48cff31e67dc52262a0bab0cc46c545c64d4436c394c8f6c9b9f561835cfc9` / `818172e0e621894a7528bb67118a7f4e0a17ace494a4ac3f5552c5fcb50c57a7`。
+
+本实验不冻结对称布局。下一步按完全相同协议评测容量前移与容量后移候选，判断问题来自 E4/RQ-KMeans 本身，还是三层容量分配造成的根前缀可学习性与碰撞后缀差异。
+
+## 18. EXP-20260813-03：E4 RQ-KMeans 容量前移 `2048×1024×512` 三轮 SFT 与固定 10k 评测
+
+### 18.1 目标与假设
+
+本实验在与第 17 节完全相同的 SFT 和评测协议下，把第一层容量从 1,024 扩大到 2,048、第三层缩小到 512，检验容量前移带来的基础 SID 唯一率和碰撞后缀缩减，能否抵消第一 token 类别数增加造成的学习难度。该实验只改变 identifier 布局，不改变 Query、请求 GID、历史行为、目标 POI 或样本顺序。
+
+### 18.2 数据、代码与配置
+
+- 数据版本：`data/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1/`，切分行数与对称布局完全一致；固定 10k 仍按同一组 `order_id + searchid` 顺序精确对齐；
+- identifier：`outputs/pid/rqkmeans/e4_bge_m3/2048x1024x512_tiger_collision_v1/`，容量为 `[2048,1024,512,143]`，基础 SID 唯一率 79.8731%，2,337,178 条四层 ID 全局唯一，mapping SHA256 为 `639fcdb12b76ef98f1eacc9289adfc575ebcb59f7c495c2172092e496f9a5580`；
+- 代码基线与评测器指纹同第 17 节；SFT 配置为 `configs/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1.yaml`；
+- 训练环境与命令：训练平台 4×A100，入口为 `bash launchers/run_train_rqkmeans_e4_2048x1024x512_sft_4a100_3epoch.sh`；三轮共 16,710 step，训练正常完成，train loss 0.421546，runtime 65,588.49 秒，吞吐 130.439 samples/s；
+- 评测环境与命令：开发机 RTX A6000，沿用第 17 节命令和 Beam=10/batch 32/chunk 1000/cutoff 512，仅替换 valid、checkpoint、Tokenizer、identifier 与输出目录为本布局。preflight 校验三个 checkpoint、100 条 Prompt、2,337,178 条索引及目标映射全部通过；未使用 Trie 或地理裁剪。
+
+### 18.3 正式结果
+
+固定业务键 SHA256 与第 17 节、TIGER 完全一致，目标 POI mismatch 为 0。三个 checkpoint 均完成 10,000 条，实际 batch size 均为 32。
+
+| Epoch | Val Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID Rate |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.387562 | 43.82% | 68.28% | 75.32% | 80.80% | 43.82% | 58.3059% | 61.2077% | 63.0040% | 66.946% |
+| 2 | 0.318318 | 49.65% | 74.49% | 81.25% | 86.33% | 49.65% | 64.3783% | 67.1762% | 68.8450% | **73.278%** |
+| **3** | **0.311500** | **50.47%** | **75.34%** | **82.00%** | **87.01%** | **50.47%** | **65.2670%** | **68.0310%** | **69.6711%** | 72.950% |
+
+epoch 3 按检索指标最优。与对称布局 epoch 3 相比，容量前移分别提高 HR@1/HR@3/HR@5/HR@10 2.48/3.82/3.65/3.59 个百分点，提高 NDCG@10 3.2382 个百分点，Valid ID Rate 提高 6.848 个百分点。与 TIGER epoch 3 相比，差距已缩小到 HR@1 -1.40、HR@3 -0.66、HR@5 -0.26、HR@10 -0.15、NDCG@10 -0.7479、Valid ID Rate -1.155 个百分点。
+
+### 18.4 产物、结论与下一步
+
+- 训练目录：`outputs/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/`；
+- 评测目录：`outputs/eval/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/`；
+- 汇总 JSON/CSV SHA256：`4d85d50cfa1869ac3be957baeb8ad3cdbe077384e814fc98d03bcb15db2dded5` / `57f06ff60c0635769f07bd2d37b883c6effd532e9a0d82235ca6248f071a5c40`。
+
+当前证据明确支持 `2048×1024×512` 优于对称 `1024³`，说明减少后段碰撞和碰撞后缀容量的收益大于第一层类别数翻倍的代价；但它仍未全面超过 TIGER，且容量后移 `512×1024×2048` 尚未完成正式训练/评测，因此不能提前冻结最终布局。下一最小步骤是补齐第三个候选，再对三者最佳 checkpoint 做 S1 Top-1/Top-5、逐层 gold-prefix Teacher-Forcing 和碰撞后缀准确率诊断。
+
+## 19. EXP-20260813-04：静态 SID 与生成检索反转诊断
+
+### 19.1 目标与假设
+
+本实验解释 E4+RQ-KMeans 的全库基础 SID 唯一率高于 TIGER，但同协议 SFT 后没有超过 TIGER 的原因。诊断把链路拆为三层：全库/请求加权碰撞分布、正确前缀条件下的逐位置可学习性、无约束 Beam 的自由生成合法率。假设不是“静态唯一率计算错误”，而是该 POI 等权指标没有衡量真实请求目标的热点碰撞、字典序碰撞后缀和完整序列闭合难度。
+
+### 19.2 数据、代码、配置与环境
+
+- 数据与 checkpoint：复用 `EXP-20260813-02/03` 和 TIGER epoch 3 的同一组固定普通 Validation 10,000 条业务键；三组 `order_id + searchid`、目标 POI、去除 identifier 内容后的完整 User Message 均逐行 10,000/10,000 一致，目标 mismatch 为 0；
+- identifier 与模型：TIGER `1024³+C306`、E4 RQ-KMeans `1024³+C288`、E4 RQ-KMeans `2048×1024×512+C143`，分别使用已经冻结的 epoch-3 checkpoint 和专属 Tokenizer；
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，工作树包含在研的非对称容量评测适配和本次分组统计。`scripts/sft/diagnose_sid_teacher_forcing.py` SHA256 为 `d4428a5d1810f382ce4fe8f2b3758c1c12774560e04be6f6bb00bf45443bcda1`；
+- 配置与命令：使用 `python scripts/sft/diagnose_sid_teacher_forcing.py --method tiger`，按三组分别传入固定子集、checkpoint、Tokenizer、Token mapping 与 `[S1,S2,S3,C]` 容量；cutoff 512、batch 32、仅统计目标位置 logits，不运行 Beam。正式分组把 `C=0` 与 `C>0` 分开；`C=0` 包含所有单例桶以及每个碰撞桶中按 `poi_id` 字典序排名第一的 POI，不能等同于“无碰撞”；
+- 环境：开发机单卡 GPU、项目 `poi-gr` 环境；三组分别处理 10,000 条，实际 batch 32，推理用时 115.69/114.25/106.54 秒，峰值显存约 6.70/6.70/6.71 GB；
+- 核验：`PYTHONPATH=src python -m unittest tests.sft.test_teacher_forcing tests.tiger.test_eval` 共 10 项通过，相关 Python 文件 `compileall` 通过。
+
+### 19.3 请求加权碰撞发生反转
+
+全库静态指标按 2,337,178 个 POI 等权；固定 10k 则按真实 Validation 请求目标采样。逐目标回查 frozen mapping 后，二者结论发生反转：
+
+| Identifier | 全库碰撞 POI | 固定 10k 碰撞桶目标 | 固定 10k 平均桶大小 | 固定 10k `C>0` | 桶大小 P90/P95/P99/Max |
+|---|---:|---:|---:|---:|---:|
+| TIGER `1024³` | 40.7894% | **38.54%** | **2.5339** | **23.56%** | **4/8/22/172** |
+| E4 RQ-KMeans `1024³` | **35.7477%** | 49.29% | 3.2469 | 34.15% | 6/10/23/221 |
+| E4 RQ-KMeans `2048×1024×512` | **31.4021%** | 41.90% | 2.6286 | 27.50% | 6/9/**14/75** |
+
+因此 E4/RQ-KMeans 的全库改善主要覆盖 POI 长尾，没有同步消除真实请求更常命中的热点桶。对称布局虽然全库碰撞 POI 比 TIGER 低 5.0417 个百分点，但固定 10k 的碰撞桶目标反而高 10.75 个百分点，第四层非零后缀目标高 10.59 个百分点。容量前移已经明显修复该问题，但请求加权分布仍略差于 TIGER。
+
+### 19.4 Gold-prefix Teacher-Forcing
+
+逐位置指标都在正确历史 token 和正确目标前缀条件下计算，因而不混入前一步自由生成错误。三级语义前缀累计 Top-1 如下：
+
+| Identifier | S1 | S1+S2 | S1+S2+S3 | 完整四 token ID | Target PPL |
+|---|---:|---:|---:|---:|---:|
+| TIGER | 75.06% | 61.75% | 53.98% | **50.76%** | **1.4151** |
+| E4 RQ-KMeans `1024³` | 80.70% | **66.72%** | **56.83%** | 49.01% | 1.4939 |
+| E4 RQ-KMeans `2048×1024×512` | **82.25%** | 65.08% | 55.97% | 49.91% | 1.4391 |
+
+这证明 E4/RQ-KMeans 的前三层不是整体不可学：两组的 S1 和完整三级前缀都高于 TIGER。收益在第四层和序列结构被抵消：
+
+| Identifier | `C>0` 样本 | `C>0` 的 C Top-1 | `C>0` 完整 ID Top-1 | `C=0` 完整 ID Top-1 | `</TARGET_POI>` Top-1 |
+|---|---:|---:|---:|---:|---:|
+| TIGER | 2,356 | **81.03%** | 46.39% | **52.11%** | **99.70%** |
+| E4 RQ-KMeans `1024³` | 3,415 | 73.65% | **47.03%** | 50.04% | 94.19% |
+| E4 RQ-KMeans `2048×1024×512` | 2,750 | 74.33% | 46.87% | 51.06% | 99.67% |
+
+对称 E4 在 `C>0` 难例上的完整 ID Top-1 并不低于 TIGER，但难例数量更多，且该次训练对 `</TARGET_POI>` 的学习出现独立异常。容量前移恢复了闭合结构，并把完整 ID 差距缩至 0.85 个百分点；它的主要剩余瓶颈是 S2/S3 与字典序 `C`，不是 S1。
+
+进一步的训练分布与混淆审计表明，这不是 Tokenizer、目标数据或评测器把闭合 token 配错：
+
+- 三份 Train JSONL 均逐行扫描 7,586,410 条，所有样本都包含 `C`；`C>0` 监督占比为 TIGER 22.9723%、E4 对称 32.4433%、E4 前移 26.4701%，与固定 10k 的难例比例方向一致；
+- `<TARGET_POI>` / `</TARGET_POI>` 在三套扩词表中的 ID 都是 `151683/151684`，初始模型里的两行权重逐元素完全相同；训练后三组闭合 token 相对初始权重的 L2 变化为 0.154028/0.154021/0.152447，没有发现 E4 对称权重行损坏或未训练；
+- E4 对称正式 packed Train Cache 已能正常加载；对首/中/尾等 8 个确定性 packed row 逐 token 核验，抽到的 22 个 `C` 后全部紧接 `</TARGET_POI>`，22 个闭合 token 后也全部仍有有效监督 token，没有观察到 `C` 落在 packed 行尾或 labels 被切断。该抽查与构建阶段“Assistant 目标截断为 0”的全量长度门禁一致；
+- E4 对称的 missing-EOS 从 epoch 1 起即为 6,204，epoch 2/3 为 9,727/9,202；它不是最终 checkpoint 才出现的一次评测抖动，而是贯穿这一次优化轨迹的稳定现象；
+- 对 E4 对称 epoch 3 的 10,000 条 gold-prefix 闭合位置记录实际 Top-1：正确闭合 9,420 条；580 条错误中，402 条继续输出另一个 `C`、100 条回退到 `S2`、77 条重新输出 `<TARGET_POI>`、1 条输出 `S3`，没有一条直接预测 EOS。`C=0/C>0` 的闭合准确率分别为 97.43%/87.96%。因此自由生成中的 `missing_eos` 不是模型把闭合符简单替换成 EOS，而是重复/回退消耗了固定 7-token 生成预算，未能走到闭合符和 EOS。
+
+这组证据把异常更准确地定位为“E4 对称标签分布触发的、单次训练轨迹内稳定的条件序列闭合不稳”。它不是已确认的数据或 SID 构建错误，也不能在只有一个训练 seed 时断言为纯随机偶发；是否可重复只能通过同协议第二 seed 训练判定。字典序 `C` 在大量无关碰撞桶中复用，E4 对称又具有最高的 `C>0` 请求监督比例，这种多模态后缀上下文与共享 token/权重绑定的优化冲突是当前最符合证据的机制解释，但仍属于推断，不冒充已证明因果。
+
+### 19.5 自由生成错误组成
+
+| Identifier | HR@1 / HR@10 / NDCG@10 | Valid ID | 不在 corpus 的路径 | missing EOS | 结构错误 |
+|---|---:|---:|---:|---:|---:|
+| TIGER | 51.87% / 87.16% / **70.4190%** | **74.105%** | 24,861 | 653 | 344 |
+| E4 RQ-KMeans `1024³` | 47.99% / 83.42% / 66.4329% | 66.102% | **22,905** | 9,202 | 1,739 |
+| E4 RQ-KMeans `2048×1024×512` | 50.47% / 87.01% / 69.6711% | 72.950% | 25,910 | **633** | 453 |
+
+对称布局比 TIGER 多 8,003 个无效 Beam 候选，但“identifier 不在 corpus”反而少 1,956 个；新增错误几乎全部来自 missing EOS 和结构闭合。这是单次 SFT 的序列化异常，不应归因于 RQ-KMeans 静态 mapping。容量前移没有该异常，其 HR@10 只比 TIGER 少 15/10,000 条，NDCG@10 低 0.7479 个百分点，属于接近但尚未超过，而不是链路失效。
+
+### 19.6 产物、结论与下一步
+
+- 分组 Teacher-Forcing：`outputs/eval/sid_teacher_forcing_fixed10k_v2_grouped/{tiger_e3,rqkmeans_e4_1024_e3,rqkmeans_e4_2048_e3}/result.json`；SHA256 分别为 `4ab5b12395487bb2d2269e0c859fd242531729db82c540b32c5f0e4683e89773`、`b7f190ab5bfb814f487bd02a4bbc788213584a6e34411911392219e85de0edb6`、`3159288a9372127c6a925e44df4c15164902fe1eb179ff2c21b316a2056f363c`；
+- E4 对称闭合 token 混淆诊断：`outputs/eval/sid_teacher_forcing_fixed10k_v3_confusion/rqkmeans_e4_1024_e3/result.json`，SHA256 为 `14629d2a5ac9d08a759955c50473ce55583c316f174889d00a1f7ab0e8227eb7`；
+- Beam 结果继续复用 `EXP-20260813-02/03` 和 TIGER 固定 10k 正式目录，没有重跑或改写；
+- 结论：静态 SID 指标没有算错，但“全库 POI 等权唯一率更高 ⇒ 生成检索一定更高”的推断不成立。当前结果否定的是只靠 E4+RQ-KMeans 静态去重就能超过 TIGER的充分性，不是否定 E4 连续向量收益、RQ-KMeans 算法或容量前移方向；
+- 下一步：先完成已经启动序列中的后移 `512×1024×2048` 同协议评测；随后在胜出布局补原始 BGE × RQ-KMeans SFT 消融，隔离 E4 与 Quantizer 贡献。新的 SID 筛选目标必须同时报告全库指标、Train/Validation 订单加权碰撞、逐层 Query 可预测性和自由生成合法率；字典序 `C` 应改为基于请求/Query 关系的桶内分配或通过合法路径约束消除无效组合，但这些属于后续创新，不能在本实验中直接改协议。
+
+## 20. EXP-20260813-06：epoch 3 全库合法路径约束解码诊断
+
+### 20.1 目标与假设
+
+本实验回答一个单一问题：E4+RQ-KMeans 没有超过 TIGER，有多少差距来自无约束 Beam 生成了 corpus 中不存在的四层组合或没有在 7 token 内闭合。假设是合法路径约束会让三组 Valid ID Rate 统一达到 100%，并且对无约束非法率最高、存在闭合异常的 E4 对称 `1024³` 带来最大收益；如果约束后它仍不能在 Top-1 超过 TIGER，则剩余问题应归于目标 POI 排序和 identifier 可学习性，而不是非法路径。
+
+该实验只评测三组冻结的 epoch 3，属于解码诊断，不是 TIGER 论文复现协议，也不覆盖 `EXP-20260813-02/03` 的无约束正式结果。
+
+### 20.2 数据、代码、配置、命令与环境
+
+- 数据：复用历史固定普通 Validation 10,000 条；三组业务键 SHA256 均为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 均为 0；
+- 模型与 identifier：TIGER `1024³+C306` 的 `checkpoint-16713`、E4 RQ-KMeans `1024³+C288` 和 `2048×1024×512+C143` 的 `checkpoint-16710`，均复用已经完成的训练、专属 Tokenizer 和覆盖 2,337,178 个 POI 的冻结四层映射；
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，工作树含本方法在研改动；正式产物记录的 evaluator/method SHA256 为 `872559f2a546e439c5ef83c30218c63cfc9f70b0f28f109cfcb2f0427853d9a1` / `2fa6f76a9c4bc942591933fa4eebaa543ad640cabb5c365014752c0fce6611d4`。`scripts/tiger/evaluate_retrieval.py` 增加显式 `--legal-path-constraint`，默认行为仍是无约束论文协议。约束实现位于 `src/poi_gr/methods/tiger/eval.py`，通过冻结索引的混合进制有序 key 对每个生成 Prefix 二分查找真实后继，不构造 Python 对象 Trie，也不引入地理剪枝；
+- 配置：Beam=10、返回 10 个候选、batch 32、chunk 1000、cutoff 512、`max_new_tokens=7`。生成路径固定为 `<TARGET_POI>,S1,S2,S3,C,</TARGET_POI>,EOS`，前三层和 `C` 的每一步只能沿 corpus 中真实存在的四层 identifier 扩展；
+- 命令：三组均使用 `/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/evaluate_retrieval.py --final-checkpoint-only --legal-path-constraint`，分别传入对应 valid、checkpoint、Tokenizer、Token mapping、identifier 和输出目录；
+- 环境：开发机单卡 NVIDIA RTX A6000 48GB，三组实际 batch size 都为 32，推理用时为 1361.99/1361.71/1370.60 秒，峰值显存约 24.26GB；
+- 核验：先用 20 条 TIGER smoke 验证 200 个候选全部可映射；随后三组正式运行均完成 10,000 条、100,000 个候选，`invalid_error_counts={}`、Valid ID Rate=100%。`tests/tiger/test_eval.py` 5 项通过，相关 Python 文件 `compileall` 和 `git diff --check` 通过。
+
+### 20.3 正式结果
+
+| Identifier / epoch 3 | 解码 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | 无约束 | 51.87% | 76.00% | 82.26% | 87.16% | 51.87% | 66.2040% | 68.7975% | 70.4190% | 74.105% |
+| TIGER `1024³` | **合法路径** | **52.17%** | **76.52%** | **83.01%** | 87.99% | **52.17%** | **66.6153%** | **69.3004%** | **70.9493%** | **100%** |
+| E4 RQ-KMeans `1024³` | 无约束 | 47.99% | 71.52% | 78.35% | 83.42% | 47.99% | 61.9376% | 64.7678% | 66.4329% | 66.102% |
+| E4 RQ-KMeans `1024³` | **合法路径** | 50.51% | 75.67% | 82.58% | 87.90% | 50.51% | 65.4926% | 68.3585% | 70.1027% | **100%** |
+| E4 RQ-KMeans `2048×1024×512` | 无约束 | 50.47% | 75.34% | 82.00% | 87.01% | 50.47% | 65.2670% | 68.0310% | 69.6711% | 72.950% |
+| E4 RQ-KMeans `2048×1024×512` | **合法路径** | 50.93% | 75.96% | 82.92% | **88.08%** | 50.93% | 65.8253% | 68.7146% | 70.4071% | **100%** |
+
+相对各自无约束结果的绝对增量为：
+
+| Identifier | ΔHR@1 | ΔHR@3 | ΔHR@5 | ΔHR@10 | ΔNDCG@10 | ΔValid ID |
+|---|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | +0.30pp | +0.52pp | +0.75pp | +0.83pp | +0.5303pp | +25.895pp |
+| E4 RQ-KMeans `1024³` | **+2.52pp** | **+4.15pp** | **+4.23pp** | **+4.48pp** | **+3.6698pp** | +33.898pp |
+| E4 RQ-KMeans `2048×1024×512` | +0.46pp | +0.62pp | +0.92pp | +1.07pp | +0.7360pp | +27.050pp |
+
+### 20.4 解释、产物与下一步
+
+1. 合法路径约束本身有效：三组共 300,000 个候选全部映射到冻结 corpus POI，结构、位置、闭合和 corpus 外组合错误都归零。
+2. 无约束非法率不能直接换算成同幅度召回损失。TIGER 和前移布局虽然分别替换了 25.895%/27.050% 的非法候选，但 HR@10 只提高 0.83/1.07pp；多数新增合法候选仍不是 gold POI。
+3. E4 对称布局是例外，其 HR@10 提高 4.48pp、NDCG@10 提高 3.6698pp，显著大于另外两组。这与 `EXP-20260813-04` 已定位的 missing-EOS/结构闭合异常一致，说明合法路径约束确实修复了这次训练轨迹中特有的一部分序列化损失。
+4. 约束后三组 HR@10 只有 0.18pp 范围（87.90%—88.08%），E4 前移以 88.08% 略高；但 TIGER HR@1/NDCG@10 仍分别比前移高 1.24/0.5422pp。结论不是“E4 创新已经全面超过 TIGER”，而是“消除非法路径后，E4 前移在 Top-10 覆盖上已经持平略优，剩余差距集中在 Top-1 排序和碰撞后缀可学习性”。
+5. 合法路径约束属于推理时使用完整全库 identifier 集合的诊断/可选系统能力，会改变 TIGER 无约束论文口径；因此主复现指标继续保留无约束结果。后续若把它作为正式方案，必须对所有同结构方法统一使用并单独报告解码开销。
+
+正式产物位于 `outputs/eval/legal_path_fixed10k_v1/{tiger_e3,rqkmeans_e4_1024_e3,rqkmeans_e4_2048x1024x512_e3}/`。三组汇总 JSON SHA256 分别为 `72c41b3f958211b2f2ffc5401b0c45875d3d51f2f6928a131c809b99184fc0d9`、`887aa96df047e6cab38e70574bb0d34119d5b272ff400d618aea0e88cbae1cd8`、`2c423ab507ed61bf42686690aa95433b8e4b3c343a7264420a10c396694acab4`。
+
+下一步不需要重训来验证非法路径假设；该假设已被定量拆开。后续最小优化应面向排序而不是继续堆合法性规则：优先把字典序 `C` 改为 Query/关系可预测的桶内分支，同时保留合法路径约束作为统一推理消融；容量后移训练仍按既有矩阵补齐，但不改变本实验结论。
+
+## 21. EXP-20260814-01：E4 容量后移 `512×1024×2048` SFT、双解码评测与首轮矩阵总结
+
+### 21.1 目标与假设
+
+本实验补齐首轮三种 30-bit 容量方向的最后一组。容量后移把第一层从 1,024 降到 512、第三层扩大到 2,048，预期第一 token 的分类更容易，但后段碰撞、字典序 `C` 和 corpus 外组合更难。实验同时保留 TIGER 论文式无约束解码和全库合法路径约束诊断，以区分“模型没有把 gold POI 排到前面”和“Beam 被非法组合占用”。
+
+### 21.2 数据、训练、代码与命令
+
+- 数据：`data/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1/`，Train/Valid/Test 为 7,586,410/597,421/606,682；固定评测仍为普通 Validation 10,000 条，业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，与 TIGER、对称、前移逐行同序，目标 POI mismatch 为 0；
+- identifier：`outputs/pid/rqkmeans/e4_bge_m3/512x1024x2048_tiger_collision_v1/`，容量 `[512,1024,2048,485]`，2,337,178 条四层 ID 全局唯一，mapping SHA256 为 `627526a4c5cdfee6d22c6f8d23a53e673011c05b343d7ff41f098e7f9a1ba0bd`；基础 SID 唯一率 73.1878%、碰撞 POI 39.1444%、最大桶 485；
+- 训练：四卡 A100、Qwen3-0.6B 全参数 BF16、3 epoch、global batch 512、`lr=5e-5`、cosine、warmup ratio 0.03、packing、cutoff 512。入口为 `bash launchers/run_train_rqkmeans_e4_512x1024x2048_sft_4a100_3epoch.sh`；16,710 step 正常完成，train loss 0.416046，runtime 65,471.01 秒；
+- checkpoint：`checkpoint-5570/11140/16710` 分别对应 epoch 1/2/3，Validation Loss 为 0.384060/0.318471/0.312857，模型、优化器、调度器、四卡 RNG 和 Trainer 状态均完整；
+- 代码状态：基线提交 `7dd52b3437a9db41834aef638e446010d0df3610`，工作树包含容量适配、评测和其他在研改动；正式评测产物记录的 evaluator/method SHA256 为 `72ed89f20bce5a5342df5927d0f802b660d9e95fbf5370a1beea0fcacac7466e` / `2fa6f76a9c4bc942591933fa4eebaa543ad640cabb5c365014752c0fce6611d4`；
+- 无约束命令：`/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/evaluate_retrieval.py`，传入三个 checkpoint、上述 valid/Tokenizer/identifier/output，Beam=10、batch 32、chunk 1000、cutoff 512；
+- 约束命令：同一入口只传 `checkpoint-16710`，并增加 `--final-checkpoint-only --legal-path-constraint`；约束逐 Prefix 只开放冻结 corpus 中真实存在的下一 token，不使用地理剪枝；
+- 环境：开发机单卡 RTX A6000 48GB。三轮无约束推理用时 1235.01/1227.79/1228.42 秒，约束 epoch 3 为 1360.05 秒；实际 batch 均为 32，峰值显存约 24.26GB。
+
+### 21.3 三轮无约束正式结果
+
+| Epoch | Val Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.384060 | 43.26% | 68.49% | 75.41% | 81.30% | 43.26% | 58.2291% | 61.0893% | 63.0271% | 69.713% |
+| 2 | 0.318471 | 49.03% | 74.14% | 80.82% | 86.37% | 49.03% | 63.9601% | 66.7257% | 68.5567% | **74.423%** |
+| **3** | **0.312857** | **50.67%** | **75.50%** | **82.03%** | **87.08%** | **50.67%** | **65.4378%** | **68.1463%** | **69.8064%** | 74.085% |
+
+epoch 3 按全部检索指标最优。其 100,000 个无约束 Beam 中有 25,915 个无效候选：25,388 个 corpus 外组合、390 个 missing EOS、65 个结构错误、70 个位置 token 错误和 2 个长度错误。错误组成与 TIGER/前移接近，没有复现对称布局的闭合异常。
+
+### 21.4 epoch 3 合法路径结果
+
+| 解码 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 无约束 | 50.67% | 75.50% | 82.03% | 87.08% | 50.67% | 65.4378% | 68.1463% | 69.8064% | 74.085% |
+| 合法路径 | 50.65% | 76.07% | 82.87% | 88.12% | 50.65% | 65.7678% | 68.5855% | 70.3083% | 100% |
+| 绝对增量 | -0.02pp | +0.57pp | +0.84pp | +1.04pp | -0.02pp | +0.3300pp | +0.4393pp | +0.5019pp | +25.915pp |
+
+合法路径替换了四分之一的无效候选，但 HR@10 只提高 1.04pp，HR@1 基本不变；大部分被补入的合法 POI仍不是 gold。该现象与 TIGER和前移一致，进一步证明“Valid ID 低”不能直接解释 Top-1/NDCG 差距。
+
+### 21.5 四组 epoch 3 统一对比
+
+无约束是 TIGER 论文复现及三种 E4 布局的主对比口径：
+
+| Identifier | 基础 SID 唯一率 | 固定10k碰撞桶目标 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | 71.6766% | **38.54%** | **51.87%** | **76.00%** | **82.26%** | **87.16%** | **70.4190%** | 74.105% |
+| E4 后移 `512×1024×2048` | 73.1878% | 52.77% | **50.67%** | **75.50%** | **82.03%** | **87.08%** | **69.8064%** | **74.085%** |
+| E4 对称 `1024³` | 76.1573% | 49.29% | 47.99% | 71.52% | 78.35% | 83.42% | 66.4329% | 66.102% |
+| E4 前移 `2048×1024×512` | **79.8731%** | 41.90% | 50.47% | 75.34% | 82.00% | 87.01% | 69.6711% | 72.950% |
+
+表中 E4 加粗只表示三种 E4 布局内最优。后移相对前移的 HR@1/HR@3/HR@5/HR@10/NDCG@10 只高 0.20/0.16/0.03/0.07/0.1353pp，远小于单 seed 训练可能产生的波动，不能宣称稳定胜出。后移相对 TIGER 仍低 HR@1 1.20pp、HR@10 0.08pp、NDCG@10 0.6126pp。
+
+统一合法路径诊断如下：
+
+| Identifier | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | 相对无约束 ΔHR@10 |
+|---|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | **52.17%** | **76.52%** | **83.01%** | 87.99% | **70.9493%** | +0.83pp |
+| E4 后移 `512×1024×2048` | 50.65% | **76.07%** | 82.87% | **88.12%** | 70.3083% | +1.04pp |
+| E4 对称 `1024³` | 50.51% | 75.67% | 82.58% | 87.90% | 70.1027% | +4.48pp |
+| E4 前移 `2048×1024×512` | **50.93%** | 75.96% | **82.92%** | 88.08% | **70.4071%** | +1.07pp |
+
+合法路径下，后移 HR@10 以 88.12% 最高，但只比前移高 0.04pp；前移在 E4 内 HR@1/NDCG@10 高 0.28/0.0988pp。两种方向仍是实质持平，TIGER 则继续保持明显更高的 Top-1 和 NDCG。
+
+### 21.6 结论、产物与下一步
+
+1. 静态唯一率与下游生成指标不单调。E4 唯一率从后移到前移提高 6.6853pp，但两者无约束 HR@10 只差 0.07pp；仅按全库唯一率选择 `2048` 或 `4096` 根节点没有下游依据。
+2. 后移与前移形成可解释的平衡：后移固定10k碰撞桶目标率 52.77%、`C>0` 37.56%、平均桶 4.8491、P99 45、最大485，后段显著更难；但其 Train 加权有效 S1 只有195，第一 token 更容易。前移降低碰撞与 `C` 难度，却把第一步扩到2,048类、有效分支682。两种代价在端到端结果上几乎抵消。
+3. 对称布局不能作为“中间容量必然更差”的证据。它的巨大无约束劣势主要来自本次单 seed 的 missing-EOS/闭合异常；约束后 HR@10 已恢复到87.90%。没有第二 seed 前，不能把这次异常归因于对称容量本身。
+4. E4/RQ-KMeans 的创新不是完全失败：合法路径下，后移/前移 HR@10 已以88.12%/88.08% 略高于 TIGER 87.99%，说明 Top-10 覆盖可达到同一水平；但三种 E4 的 HR@1 和 NDCG@10 均低于 TIGER，尚未证明更好的整体排序质量。
+5. 首轮容量矩阵不再追加极端 `256/4096` SFT。若后续只选一个 E4 布局做新碰撞后缀或原始 BGE 消融，优先选择前移 `2048×1024×512`：不是因为它在当前单 seed 总分绝对最高，而是它具有更好的请求碰撞分布、约束后 E4 内最高 HR@1/NDCG，并避免后移最大桶485；后移保留为粗根对照。正式冻结前仍建议对前移/后移各补一个 seed 或做配对 bootstrap。
+
+训练目录为 `outputs/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/`；无约束评测目录为同名 `outputs/eval/` 目录，汇总 JSON SHA256 为 `17639c9207edd2f6608ae2e316ea059a344a58bd780f1539a60f6a37352578dc`；约束评测位于 `outputs/eval/legal_path_fixed10k_v1/rqkmeans_e4_512x1024x2048_e3/`，汇总 JSON SHA256 为 `1cab9f3b4ce3acd09ce1e24a83cb7394912877ee634e1845b253e2a7ac9f6793`。
+
+## 22. EXP-20260815-01：对称 `1024³` 下游 `2×2` 缺失两格 SFT 训练准备
+
+### 22.1 目标与对照设计
+
+静态 SID `2×2` 已经证明 E4 与 RQ-KMeans 的全局唯一性收益高度重叠，但当前下游只有 `BGE×RQ-VAE` 的 TIGER 和 `E4×RQ-KMeans` 两格，无法把 Embedding 主效应、Quantizer 主效应和交互项拆开。本实验因此只补齐两个缺失单元，不改 Prompt、样本、切分、历史窗口、碰撞后缀规则或训练超参：
+
+| Embedding × Quantizer | 基础 SID 唯一率 | 碰撞 POI | 最大桶 | 下游状态 |
+|---|---:|---:|---:|---|
+| BGE × RQ-VAE | 71.6766% | 40.7894% | 306 | TIGER 三轮 SFT/评测已完成 |
+| E4 × RQ-VAE | 74.3539% | 37.4194% | 334 | **本轮补齐训练输入** |
+| BGE × RQ-KMeans | 76.0725% | 36.1501% | 467 | **本轮补齐训练输入** |
+| E4 × RQ-KMeans | 76.1573% | 35.7477% | 288 | 对称布局三轮 SFT/评测已完成 |
+
+两个新 identifier 均固定为 `[S1,S2,S3,C]`，单例桶也显式使用 `C0`，碰撞桶内按 `poi_id` 字典序编号。BGE+RQ-KMeans 需要 `C0–C466`，mapping SHA256 为 `a665e1a24f219f504bcde937684b90ec79ad72ad5b47fdb7396dd39c6959238b`；E4+RQ-VAE 需要 `C0–C333`，mapping SHA256 为 `d0816eb70c66405b159b0efeb247583d7efab8e27e36b2c1956d956b989b291c`。两者都覆盖 2,337,178 个 POI，完整四层 ID 全局唯一。
+
+### 22.2 Messages、Tokenizer 与 packed Cache
+
+两套 Messages 使用与 TIGER 完全相同的 32 个订单分片、2026-07-01–12/07-13/07-14 切分、2026-04-01–06-30 历史窗口和最多 10 条历史。两次均完整扫描并保留 8,790,513 行，Train/Valid/Test 为 7,586,410/597,421/606,682，历史覆盖率 72.0156605%，平均长度 4.915318；`stats.json` SHA256 均为 `3e43d18c95bdbe5e4283260646a26973e802a78de92d337807148a902f6c699a`。
+
+| 单元 | Messages Manifest | 新增/最终词表 | Tokenizer SHA256 | Model Mapping SHA256 | Cache Manifest SHA256 |
+|---|---|---:|---|---|---|
+| BGE+RQ-KMeans | `754588f61715f38c0a72e8b6c6e4585cf7687d2b5612cbb542114f58c154dc4b` | 5,587 / 157,256 | `d8376ebb6be9811dd3e549aedcbb2f2615f9608992d14e654a152bf979e7fe43` | `efe29fcf4bbb0638231bfdcd5ebdee8013efe977eb3ce1ad9328e3efaab8895c` | `70ae59d4f323d4817c47a728628fd46d924b9796da34fd38afb385e2e549ea49` |
+| E4+RQ-VAE | `0930e48303958a711ddbab8dc167ac882512d67e61366caa398c0ec4199e90f9` | 5,454 / 157,123 | `6e03e427fbbee690a2a2c97256816c1947a4e9b950914e9eac6f2472ff2174fe` | `b8cffbb14ad917dfc24440938046cf7519319b767b329180eb162af628b7fcc3` | `5994a30a2ca0db07e1bf28a587a5df8c0fab9e9d55c2e4e0efd71a4a96db332c` |
+
+两套正式 Cache 均约 31 GiB，使用 `qwen3_nothink`、`packing=true`、`train_on_prompt=false`和 cutoff 512。packed Train/Validation 均为 2,851,757/208,686，固定 smoke 均为 3,786/697；4,432,762 条 Train+Valid 样本超过 128 Token，2,302 条未截断总长超过 512，但 Assistant 目标截断数为 0。Length Stats SHA256 分别为 `de4463fe470eebc6319effc4016fb09e4622c5ebce0a8b34a749bcb74b7d746d` / `1ac51d1a4e8f523e64e44d34b74e622712b0d9eee3cf388491640ae4bb786611`。Test 只保留 JSONL，未进入预处理 Cache。
+
+可复现数据构建入口为：
+
+~~~bash
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/build_sft_data.py \
+  --orders-dir data/beijing_order_clean_20260701_20260714_history10_20260401_20260630_json \
+  --tiger-id-dir <identifier_dir> --output-dir <messages_dir> \
+  --train-start 2026-07-01 --train-end 2026-07-12 \
+  --valid-date 2026-07-13 --test-date 2026-07-14 \
+  --history-start 2026-04-01 --history-end 2026-06-30 \
+  --max-history-events 10 --geohash-length 6 \
+  --user-bucket-count 2000 --base-codebook-sizes 1024,1024,1024
+
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/pid/prepare_vocab.py \
+  --model-dir models/Qwen3-0.6B --tokens <messages_dir>/special_tokens.json \
+  --output-dir <expanded_model> --expected-token-count <count> \
+  --mapping-filename poi_token_mapping.json --schema-version <schema>
+
+TMPDIR=<short_project_tmp> /ofs/map_search/hudan/envs/poi-gr/bin/python \
+  scripts/sft/validate_tokenization.py \
+  --model-dir <expanded_model> --train-file <messages_dir>/train.jsonl \
+  --valid-file <messages_dir>/valid.jsonl --output-dir <tokenized_dir> \
+  --dataset-dir configs/sft --cutoff-len 512 --batch-size 4096 \
+  --workers 4 --preprocessing-batch-size 1000 \
+  --train-dataset <train_dataset> --valid-dataset <valid_dataset> \
+  --mapping-filename poi_token_mapping.json \
+  --smoke-train-rows 10000 --smoke-valid-rows 2000
+~~~
+
+### 22.3 运行、训练入口与核验
+
+运行基线为 `7dd52b3437a9db41834aef638e446010d0df3610`的 dirty worktree，环境为 `/ofs/map_search/hudan/envs/poi-gr`。两个 Messages 任务在服务器 CPU 后台并行流式扫描，耗时约 57.1/58.4 分钟；Tokenizer/Cache 使用 4 个 worker 串行构建，项目内 TMPDIR 绝对路径长度为 53/54 字节，总队列在 20:07 以退出码 0 结束。三个运行控制目录为 `outputs/run_control/{rqkmeans_bge_1024_sft_data,rqvae_e4_1024_sft_data,downstream_2x2_postprocess}/`。
+
+训练配置与 4×RTX PRO 6000D 平台入口为：
+
+- `configs/sft/rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1.yaml` 与 `launchers/run_train_rqkmeans_bge_1024x1024x1024_sft_4x6000d_3epoch.sh`；
+- `configs/sft/rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1.yaml` 与 `launchers/run_train_rqvae_e4_1024x1024x1024_sft_4x6000d_3epoch.sh`。
+
+两者都是 Qwen3-0.6B 全参数 BF16、3 epoch、`lr=5e-5`、cosine、warmup ratio 0.03；单卡 batch 16、累积 8、4 进程，global batch 为 512。TMPDIR 为 `outputs/tmp/rkb1024d` / `outputs/tmp/rqe41024d`。初始入口沿用历史模板的固定 master port 29733/29734；E4+RQ-VAE 首次平台启动暴露运行时端口冲突后，两套新入口均改为 `--master_port 0` 自动选择空闲端口，详见 `EXP-20260815-03`。同时按同一 6000D 模板补齐 E4 RQ-KMeans 三个容量布局的本地平台入口，使得已记录的 A100/6000D 六个入口再次与测试契约一致。
+
+完成后的独立门禁为：
+
+- 两个 Tokenizer 重载后，全部 5,587/5,454 个新 Token 都恰好编码为一个 ID，且不在 special token 集合；
+- 两个 Cache 均能用 `datasets.load_from_disk` 重载，Train/Validation 首、中、尾样本共 12 条均为长度 512，`labels` 含有效监督，多模态列为空；
+- 两组 `scripts/sft/train.py --dry_run 1` 均解析为 global batch 512，不启动训练；
+- 五个相关 6000D launcher 均 `bash -n` 通过，短 TMPDIR 绝对路径为 51–54 字节；
+- `tests.sft.test_training_config + tests.sft.test_training_entrypoint + tests.tiger.test_data + tests.tiger.test_identifier` 共 43 项全部通过。
+
+### 22.4 结论与下一步
+
+对称 `1024³` 的下游 `2×2` 现在已经具备完全同口径训练条件，但本记录只表示训练准备完成，不表示 BGE+RQ-KMeans 或 E4+RQ-VAE 的生成检索指标已改善。下一步在 4×6000D 平台分别训练这两格，再对四格统一使用同一固定 Validation 10k、Beam=10 和无约束主口径：
+
+1. `BGE+RQ-KMeans - BGE+RQ-VAE` 估计 Quantizer 主效应；
+2. `E4+RQ-VAE - BGE+RQ-VAE` 估计 Embedding 主效应；
+3. 四格 difference-in-differences 判断 E4 与 RQ-KMeans 是互补还是重叠。
+
+静态唯一率、碰撞桶大小和 Cache 指标均不替代最终 SFT HR/NDCG。
+
+## 23. EXP-20260815-03：E4+RQ-VAE 首次 SFT 启动端口冲突与自动端口修复
+
+### 23.1 运行状态与失败证据
+
+E4+RQ-VAE 对称 `1024³` 首次正式 SFT 任务于 2026-08-15 20:34:22 在 4×RTX PRO 6000D 平台启动。入口为 `launchers/run_train_rqvae_e4_1024x1024x1024_sft_4x6000d_3epoch.sh`，模型、Messages、packed Cache、三轮超参和 global batch 512 均沿用 `EXP-20260815-01`。20:36:02，LLaMA-Factory 尝试以四进程在 `127.0.0.1:29734` 建立静态 TCP rendezvous；20:36:17 任务以退出码 1 结束，核心错误为 `torch.distributed.DistNetworkError`、`EADDRINUSE` 和 `address already in use`。
+
+失败发生在 rank 0 创建 `TCPStore` 之前，没有启动任何训练 worker、没有完成训练 step，也没有 checkpoint 或 Trainer 状态。输出目录只有 `resolved_config.json` 和 4,544 字节的 `train_console.log`；因此该运行不可续训，重试必须保持 `resume=0`。日志中的 `PYTORCH_CUDA_ALLOC_CONF is deprecated` 只是弃用警告，与退出无关。
+
+### 23.2 根因与修复
+
+`scripts/sft/train.py` 自 2026-07-26 起一直将 `--master_port` 无条件写入环境变量 `MASTER_PORT`，历史 TIGER、GNPR、GenPOI、GHR 和 RQ-KMeans 平台入口也都使用固定端口。新入口沿用该约定并使用仓库内未重复的 29734，但“启动器之间编号不同”不能保证平台节点运行时没有其他进程占用；同时，显式 `MASTER_PORT` 会覆盖 LLaMA-Factory 自带的 `find_available_port()` 路径。这解释了为什么历史任务可正常运行，而本次在平台复用节点上失败。
+
+修复保持固定端口向后兼容，同时增加单机自动模式：
+
+- `scripts/sft/train.py --master_port 0` 现在表示自动端口；进入 LLaMA-Factory 前主动删除可能由平台继承的 `MASTER_PORT`，由框架在实际节点选择空闲 TCP 端口；
+- 1—65535 仍表示显式固定端口，历史入口行为不变；负数和大于 65535 的值继续拒绝；
+- BGE+RQ-KMeans 与 E4+RQ-VAE 两套新 4×6000D 启动器均切换为 `--master_port 0`。文件修改不会改变已经启动的 BGE+RQ-KMeans 进程环境；
+- `resolved_config.json` 新增 `master_port_mode=auto/fixed`，自动模式记录 `master_port=0`，实际选中的端口以 LLaMA-Factory 启动日志为准。
+
+### 23.3 核验与重试决定
+
+- `scripts/sft/train.py` compileall 通过；
+- `tests.sft.test_training_entrypoint` 与 `tests.sft.test_training_config` 共 34 项通过，覆盖自动模式清除遗留 `MASTER_PORT`、固定模式保持原值和非法端口拒绝；
+- 两套新 6000D launcher 均通过 `bash -n`；
+- 宿主环境调用 LLaMA-Factory 原生 `find_available_port()` 成功返回空闲端口 50781；沙箱内同一 socket 探测按预期因权限返回 `EPERM`，不属于代码失败；
+- E4+RQ-VAE 的完整参数 `--dry_run 1` 通过，记录 `master_port=0`、`master_port_mode=auto` 和 global batch 512；
+- `git diff --check` 通过。
+
+本次只修复平台启动可靠性，不修改模型、数据、随机种子、Batch、优化器或评测协议，也没有产生可解释的 SFT 指标。下一步使用修复后的同名启动器从头重提 E4+RQ-VAE；日志应显示一个运行时空闲端口并随后进入四 rank 模型加载与训练，而不是固定的 29734。
+
+## 24. EXP-20260816-02：对称 `1024³` 下游 `2×2` 三轮 SFT、双解码与交互结论
+
+### 24.1 目标与假设
+
+本实验完成 `EXP-20260815-01` 准备的 BGE+RQ-KMeans 与 E4+RQ-VAE 两个缺失单元，并与既有 TIGER（BGE+RQ-VAE）和 E4+RQ-KMeans 组成完整下游 `2×2`。四格都使用 `[S1,S2,S3,C]` 全局唯一 identifier、同一 Qwen3-0.6B 全参数 SFT、相同历史/Query/GID Prompt、固定普通 Validation 10k 和 Beam=10。
+
+预注册比较为：
+
+1. `BGE+RQ-KMeans − BGE+RQ-VAE` 估计 Quantizer 主效应；
+2. `E4+RQ-VAE − BGE+RQ-VAE` 估计 Embedding 主效应；
+3. `E4+RQ-KMeans − BGE+RQ-KMeans − E4+RQ-VAE + BGE+RQ-VAE` 估计交互项。
+
+假设是静态 `2×2` 中 E4 与 RQ-KMeans 的唯一率收益虽有重叠，但至少有一个单独主效应能改善端到端生成检索；若两项都不能超过 TIGER，则静态唯一率、连续向量召回和生成标签可学习性之间存在断层。
+
+### 24.2 数据、训练与代码状态
+
+- 数据与标识符完全复用 `EXP-20260815-01`。两格 Messages 的 Train/Valid/Test 均为 7,586,410/597,421/606,682，历史窗口最多 10 条，packed Train/Validation 均为 2,851,757/208,686，Assistant 目标截断为 0；
+- BGE+RQ-KMeans 使用 `outputs/pid/rqkmeans/bge_m3/1024x1024x1024_tiger_collision_v1/`，容量 `[1024,1024,1024,467]`，mapping/manifest SHA256 为 `a665e1a24f219f504bcde937684b90ec79ad72ad5b47fdb7396dd39c6959238b`/`4d61fae7c1a0338a20a18d25ba8ae34693d23da8aaa814dcb26a8e14f286ceb9`；
+- E4+RQ-VAE 使用 `outputs/pid/rqvae/e4_bge_m3/1024x1024x1024_tiger_collision_v1/`，容量 `[1024,1024,1024,334]`，mapping/manifest SHA256 为 `d0816eb70c66405b159b0efeb247583d7efab8e27e36b2c1956d956b989b291c`/`61ce65d017f3aaa2e344ca97640b36d18964d3c3f48bd59061be74593d960586`；
+- 两格均使用 4×RTX PRO 6000D、BF16、3 epoch、global batch 512、`lr=5e-5`、cosine、warmup ratio 0.03、packing 和 cutoff 512；checkpoint 均为 `5570/11140/16710`。BGE+RQ-KMeans 训练耗时 58,138.19 秒、Train Loss 0.450405、Validation Loss 为 0.393806/0.310460/0.301480；E4+RQ-VAE 训练耗时 65,678.13 秒、Train Loss 0.437443、Validation Loss 为 0.403897/0.329727/0.322617；
+- BGE+RQ-KMeans 三轮 checkpoint SHA256 为 `2b224a3318c03daf7be297d072352ccc1ced7eec181bc2a00a6cd090cfdf5f15`/`c471b3e3637b1a45e0ac3f08706c7003d50be00e48a2d1ce2d0a384fd73507b6`/`86cc46c1eb7c29cb0bd52b147831144749b3b518e48542c07d5af1fb251f1428`；E4+RQ-VAE 为 `453b220c28e32db7f28990707f1e3189a291fdfd025062b8a721a07dd62a1440`/`996f27d816caac9f18e35fe933b84c8a4cf78b81271453aab5132e8e1d58aa90`/`897da192e0268d8ab62e82c9c3b9aadee2d3cabdca6c105baea2305b63b15f36`；
+- 训练入口分别为 `launchers/run_train_rqkmeans_bge_1024x1024x1024_sft_4x6000d_3epoch.sh` 与 `launchers/run_train_rqvae_e4_1024x1024x1024_sft_4x6000d_3epoch.sh`。修复后的自动端口模式正常进入四 rank 训练；任务末尾只有 allocator 弃用警告，checkpoint、最终模型和 Trainer 状态完整；
+- 运行与评测代码基线为 Git HEAD `7dd52b3437a9db41834aef638e446010d0df3610` 的 dirty worktree。正式评测冻结 evaluator/method SHA256 为 `72ed89f20bce5a5342df5927d0f802b660d9e95fbf5370a1beea0fcacac7466e`/`2fa6f76a9c4bc942591933fa4eebaa543ad640cabb5c365014752c0fce6611d4`。
+
+### 24.3 四卡并行评测协议与核验
+
+两格分别使用下列平台入口：
+
+```bash
+bash launchers/run_evaluate_rqkmeans_bge_1024x1024x1024_fixed10k_4x6000d.sh
+bash launchers/run_evaluate_rqvae_e4_1024x1024x1024_fixed10k_4x6000d.sh
+```
+
+每个入口把四张 6000D 分配给四个独立单卡进程：GPU0/1/2 分别运行 epoch 1/2/3 无约束 Beam Search，GPU3 运行 epoch 3 全库合法路径约束。四个进程均固定 Beam=10、batch 32、chunk 1000、cutoff 512，不使用地理剪枝。无约束非法候选保留原 Beam 位置并计 miss；约束模式只开放冻结 2,337,178 条完整 identifier 的真实 Prefix。
+
+两格共 8 个子任务均为 `completed`，每个结果包含 10,000 条；业务键 SHA256 均为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 均为 0。BGE+RQ-KMeans/E4+RQ-VAE 固定子集 SHA256 为 `39dbec826e128e9ea09919b90788ccfbb545045568abde43ee9e8050ad10826b`/`cbec730c861a5125b6121715c5100b0b3dad60e135256d28179056753e6a35de`。约束模式的 200,000 个候选全部合法，`invalid_error_counts={}`。
+
+四卡并行后每个无约束任务推理约 621—626 秒，约束任务约 655—657 秒；实际 batch 均为 32，峰值 PyTorch allocated 约 24.26GB。平台日志均以对应 `best_checkpoint` JSON 正常闭合，没有 OOM、batch 回退或异常退出证据。
+
+### 24.4 两个新增单元的三轮无约束结果
+
+BGE+RQ-KMeans：
+
+| Epoch | Val Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.393806 | 44.24% | 67.64% | 74.54% | 79.70% | 44.24% | 58.1344% | 60.9812% | 62.6750% | 68.240% |
+| 2 | 0.310460 | 50.40% | 74.16% | 80.66% | 85.51% | 50.40% | 64.5398% | 67.2323% | 68.8366% | **73.958%** |
+| **3** | **0.301480** | **51.83%** | **75.76%** | **81.97%** | **86.72%** | **51.83%** | **66.0182%** | **68.5906%** | **70.1553%** | 73.704% |
+
+E4+RQ-VAE：
+
+| Epoch | Val Loss | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@1 | NDCG@3 | NDCG@5 | NDCG@10 | Valid ID |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.403897 | 42.47% | 66.73% | 73.78% | 79.89% | 42.47% | 56.8821% | 59.7895% | 61.7983% | 69.153% |
+| 2 | 0.329727 | 49.05% | 73.50% | 80.07% | 85.31% | 49.05% | 63.5388% | 66.2548% | 67.9899% | 74.796% |
+| **3** | **0.322617** | **49.81%** | **74.79%** | **81.28%** | **86.16%** | **49.81%** | **64.6345%** | **67.3261%** | **68.9340%** | **74.888%** |
+
+两格均随 epoch 在全部 HR/NDCG 指标上持续改善，epoch 3 为主结果。BGE+RQ-KMeans epoch 3 的 26,296 个非法候选主要是 26,113 个 corpus 外组合，另有 106 个 missing EOS、61 个位置 Token、15 个结构和 1 个长度错误；E4+RQ-VAE 的 25,112 个非法候选主要是 24,572 个 corpus 外组合，另有 388 个 missing EOS、81 个位置 Token、65 个结构和 6 个长度错误。两者都没有复现 E4+RQ-KMeans epoch 3 的 9,202 个 missing EOS 与 1,739 个结构错误。
+
+### 24.5 epoch 3 完整下游 `2×2`
+
+无约束主口径：
+
+| Embedding × Quantizer | 基础 SID 唯一率 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **BGE × RQ-VAE（TIGER）** | 71.6766% | **51.87%** | **76.00%** | **82.26%** | **87.16%** | **70.4190%** | 74.105% |
+| E4 × RQ-VAE | 74.3539% | 49.81% | 74.79% | 81.28% | 86.16% | 68.9340% | **74.888%** |
+| BGE × RQ-KMeans | 76.0725% | 51.83% | 75.76% | 81.97% | 86.72% | 70.1553% | 73.704% |
+| E4 × RQ-KMeans | **76.1573%** | 47.99% | 71.52% | 78.35% | 83.42% | 66.4329% | 66.102% |
+
+合法路径诊断：
+
+| Embedding × Quantizer | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID | 相对无约束 ΔHR@10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **BGE × RQ-VAE（TIGER）** | 52.17% | **76.52%** | **83.01%** | **87.99%** | **70.9493%** | 100% | +0.83pp |
+| E4 × RQ-VAE | 50.08% | 75.18% | 81.77% | 87.04% | 69.4523% | 100% | +0.88pp |
+| BGE × RQ-KMeans | **52.20%** | 76.09% | 82.46% | 87.41% | 70.6185% | 100% | +0.69pp |
+| E4 × RQ-KMeans | 50.51% | 75.67% | 82.58% | 87.90% | 70.1027% | 100% | **+4.48pp** |
+
+主效应与交互项均按绝对百分点计算：
+
+| 口径 / 效应 | ΔHR@1 | ΔHR@3 | ΔHR@5 | ΔHR@10 | ΔNDCG@10 | ΔValid ID |
+|---|---:|---:|---:|---:|---:|---:|
+| 无约束：E4 主效应 @ RQ-VAE | -2.06 | -1.21 | -0.98 | -1.00 | -1.4850 | +0.783 |
+| 无约束：RQ-KMeans 主效应 @ BGE | -0.04 | -0.24 | -0.29 | -0.44 | -0.2637 | -0.401 |
+| 无约束：E4 主效应 @ RQ-KMeans | -3.84 | -4.24 | -3.62 | -3.30 | -3.7224 | -7.602 |
+| 无约束：RQ-KMeans 主效应 @ E4 | -1.82 | -3.27 | -2.93 | -2.74 | -2.5012 | -8.786 |
+| **无约束 Difference-in-Differences** | **-1.78** | **-3.03** | **-2.64** | **-2.30** | **-2.2374** | **-8.385** |
+| **合法路径 Difference-in-Differences** | **+0.40** | **+0.92** | **+1.36** | **+1.44** | **+0.9811** | **0.000** |
+
+### 24.6 结论、边界与产物
+
+1. 无约束主口径仍由 TIGER 全面最好。BGE+RQ-KMeans 与其非常接近，但 HR@1/HR@10/NDCG@10 仍低 0.04/0.44/0.2637pp；该差距不足以支持“RQ-KMeans 优于 RQ-VAE”，最多说明二者在单 seed 下基本持平。
+2. E4 没有把连续向量召回收益传递到生成检索。E4+RQ-VAE 相对 TIGER 的 HR@1/HR@10/NDCG@10 下降 2.06/1.00/1.4850pp，尽管基础 SID 唯一率提高 2.6774pp、Valid ID 还提高 0.783pp。E4 改善的是静态向量检索与目录区分，不代表由 Query/历史生成其离散簇标签更容易。
+3. 无约束 `2×2` 呈负交互，但不能全部解释为 Embedding 与 Quantizer 的真实算法冲突。E4+RQ-KMeans 单 seed 存在独立的 missing-EOS/结构闭合异常；合法路径消除该异常后 Difference-in-Differences 从 HR@10/NDCG@10 的 -2.30/-2.2374pp 变为 +1.44/+0.9811pp。因而可信结论是“没有可加的无约束收益，且闭合稳定性会放大组合风险”，不是“理论上永久负交互”。
+4. 约束解码没有改变总体排序。BGE+RQ-KMeans 约束 HR@1 比 TIGER 高 0.03pp，但 HR@10/NDCG@10 仍低 0.58/0.3308pp；E4+RQ-KMeans HR@10 只比 TIGER 低 0.09pp，但 HR@1/NDCG@10 低 1.66/0.8466pp。所有差异都不足以证明新组合整体更优。
+5. 当前不再以 E4+对称 RQ-KMeans 作为默认下游组合，也不继续追加仅追求全库唯一率的容量实验。若保留一个最稳的对称新量化器对照，应选 BGE+RQ-KMeans；若继续 E4，必须先优化 Query→SID 可预测性或使用软监督/联合目标，而不是只重构 POI Embedding 后重新聚类。
+6. 这四格都是单 seed；其中 E4+RQ-KMeans 使用历史 4×A100 训练，其余三格使用 4×6000D。模型、BF16、global batch、seed、数据与评测协议相同，硬件本身不应造成当前数个百分点的系统性差距，但严格方差结论仍需要同硬件复跑或配对 bootstrap。本实验不把小于约 0.5pp 的差异写成稳定胜负。
+
+训练产物：
+
+- BGE+RQ-KMeans：`outputs/sft/rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_6000d_e3/`，`all_results.json` SHA256 为 `e9de1377e483129e62d4930aea70e6d83275e37427c06d3956f9b4743bcfe0a3`；
+- E4+RQ-VAE：`outputs/sft/rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_6000d_e3/`，`all_results.json` SHA256 为 `a19d3707479823b606d5dbecd1068bd1ae487643738772bd2aaca5a8200f97e3`。
+
+评测产物：
+
+- BGE+RQ-KMeans 无约束三轮位于 `outputs/eval/rqkmeans_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_6000d_e3/parallel_gpu_runs/`，三个汇总 JSON SHA256 为 `0683f477dd5a8f1692c9f40de4e6bf61dbbf5554671c2f40b85ce02590a72793`/`6a7fa29d5bfa054dd730d811a81db59c3482466ef8b3e9441f907f9ea1a0b47e`/`42c343d35e41109f3b592e565d00144fed6e2bea060fcd6e9a710047a4a0dfdd`；约束目录为 `outputs/eval/legal_path_fixed10k_v1/rqkmeans_bge_1024_e3/`，汇总 JSON SHA256 为 `9bcfce0d0eac3246b80a2b66b2efba0d1d4ea15d3bf66fdf522cf49932d93f88`；
+- E4+RQ-VAE 无约束三轮位于 `outputs/eval/rqvae_e4_bge_m3_1024x1024x1024_history10_query_gid_tiger_collision_v1_gpu4_6000d_e3/parallel_gpu_runs/`，三个汇总 JSON SHA256 为 `9ef728f083a108e38010383a622bccfb47c03691d8beeff8ca306d8fe311a37a`/`f4a8ceb02112343b42214494c0e88dea343efcadc26f58ff052a1596101e792d`/`1e8f7cc995ae8cb59fb890c5a24a51817b973f3b4888208550a429a244b0f365`；约束目录为 `outputs/eval/legal_path_fixed10k_v1/rqvae_e4_1024_e3/`，汇总 JSON SHA256 为 `fab1cc85bd4f9cea3799131fb711c86aaf34ba409adcfedb8e22db3876d1a98c`。
+
+下一步不再追加新的静态量化组合。最小优先项是基于现有固定 10k 做配对置信区间或统一同硬件复跑，以确认 BGE+RQ-KMeans 与 TIGER 的亚百分点差异；若项目目标是方法创新，则应转向 Query 条件的 SID 可预测性、联合训练或排序目标，而不是继续单独优化 POI 静态唯一率。
+
+## 25. EXP-20260819-02：四组 epoch-3 三层 Bucket 覆盖诊断
+
+### 25.1 目标与假设
+
+本实验承接 TIGER 的 `EXP-20260819-01`，不训练新模型，只把同一套前三层 `[S1,S2,S3]` Bucket-HR 和全 Beam 候选轨迹复用于四个现成创新候选：BGE+RQ-KMeans `1024³`、E4+RQ-VAE `1024³`、E4+RQ-KMeans `1024³` 和 E4+RQ-KMeans 容量后移 `512×1024×2048`。目标是区分完整四层 ID 的损失究竟来自前三层目标 Bucket 未进入 Beam，还是来自碰撞后缀 `C`、闭合和桶内实体选择。
+
+预注册决策是：若创新候选的 Bucket-HR 明显高于 TIGER，则先冻结前三层生成器，进入不改变 SFT 的轻量桶内/跨桶排序；若没有明显提高，则停止排序主线，转入受限 QD-RQ Top-32 弱权重门禁。Bucket-HR 是候选覆盖诊断，不是已经实现的最终 POI 排序指标，也不产生 NDCG。
+
+### 25.2 数据、代码与运行协议
+
+- 四组均使用固定普通 Validation 10,000 条，按 `order_id + searchid` 与 V1 参考子集精确对齐；业务键 SHA256 均为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 均为 0；
+- 四组方法子集 SHA256 依次为 `39dbec826e128e9ea09919b90788ccfbb545045568abde43ee9e8050ad10826b`、`cbec730c861a5125b6121715c5100b0b3dad60e135256d28179056753e6a35de`、`d8215f80868383988f8a283ceb00cba97fdaf19c5582f975edacf6aed3bef199`、`9272452e1d31bea8197eef370af22b55c6724d79a71402e312203e451cb52f65`；
+- checkpoint 均为 epoch 3 的 `checkpoint-16710`，模型 SHA256 依次为 `86cc46c1eb7c29cb0bd52b147831144749b3b518e48542c07d5af1fb251f1428`、`897da192e0268d8ab62e82c9c3b9aadee2d3cabdca6c105baea2305b63b15f36`、`db417fdbd22602e07150c6b14d68d8fe97abac526a39747bfcca20e814c6ccdf`、`0cfda643c162999bebbfb28c1b591b0b13b1eeee8b5cf6078752e796b5a8ca53`；identifier mapping SHA256 依次为 `a665e1a24f219f504bcde937684b90ec79ad72ad5b47fdb7396dd39c6959238b`、`d0816eb70c66405b159b0efeb247583d7efab8e27e36b2c1956d956b989b291c`、`a1583334b9a32f43444e127626fb298bab272598904849ab65bd005ae9a3aba7`、`627526a4c5cdfee6d22c6f8d23a53e673011c05b343d7ff41f098e7f9a1ba0bd`；
+- 运行基线为 Git HEAD `7dd52b3437a9db41834aef638e446010d0df3610` 的 dirty worktree。`scripts/tiger/evaluate_retrieval.py` 与 `src/poi_gr/methods/tiger/eval.py` SHA256 为 `6cd1f0d32676c4e9aa3d73bb391c5e3cd66038b179110a0edb57d4be2663299e` / `eb42c361ae6573b545c561e545b8e5af90644b05586c08a1af9200fe608ecf8f`；
+- 先完成四组 preflight 和 BGE+RQ-KMeans 10 条本机 A6000 smoke，再通过 `bash launchers/run_evaluate_bucket_diagnostics_fixed10k_4x6000d.sh` 在 4×RTX PRO 6000D 平台一张卡一个进程并行运行。四组均为无约束 Beam=10、batch 32、chunk 1,000、历史 checkpoint 对应的 cutoff 512，并启用 `--final-checkpoint-only --bucket-diagnostics`；不使用合法路径约束或地理裁剪；
+- 三层前缀从原始序列的 `<TARGET_POI>, S1, S2, S3` 独立解析，不依赖 `C`、闭合符或 EOS 合法。唯一 Bucket 排名删除不可在目录展开的前缀，并按第一次 Beam 出现去重。四组实际 batch 均为 32，单组推理 622.14—627.56 秒，峰值显存约 24.26GB，没有 OOM 或 batch 回退。
+
+### 25.3 核心结果
+
+同一次诊断运行的精确四层结果与唯一可展开 Bucket 结果如下；TIGER 使用 `EXP-20260819-01` 的同口径冻结结果：
+
+| Embedding × Quantizer / 容量 | 精确 HR@1/3/5/10 | 精确 NDCG@10 | 唯一 Bucket HR@1/3/5/10 | Bucket−精确 HR@1/10 |
+|---|---:|---:|---:|---:|
+| TIGER：BGE+RQ-VAE `1024³` | 51.87/76.00/82.26/87.16% | 70.4190% | 55.53/79.64/85.10/88.06% | +3.66/+0.90pp |
+| BGE+RQ-KMeans `1024³` | 51.83/75.76/81.97/86.72% | 70.1553% | 56.03/79.51/84.73/87.70% | +4.20/+0.98pp |
+| E4+RQ-VAE `1024³` | 49.81/74.79/81.28/86.16% | 68.9340% | 56.72/79.93/84.91/87.26% | +6.91/+1.10pp |
+| E4+RQ-KMeans `1024³` | 48.03/71.57/78.38/83.57% | 66.5179% | 58.25/80.81/85.57/87.69% | +10.22/+4.12pp |
+| **E4+RQ-KMeans `512×1024×2048`** | **50.58/75.56/82.07/87.07%** | **69.7840%** | **59.69/81.55/86.53/88.45%** | **+9.11/+1.38pp** |
+
+| 方法 | 目标碰撞桶请求占比 | 目标桶平均/最大大小 | 每请求唯一可展开桶 | 不可展开候选 | 重复 Bucket 候选 |
+|---|---:|---:|---:|---:|---:|
+| TIGER | 38.54% | 2.5339 / 172 | 6.5462 | 23.870% | 10.668% |
+| BGE+RQ-KMeans `1024³` | 37.81% | 2.6066 / 112 | 6.5005 | 25.262% | 9.733% |
+| E4+RQ-VAE `1024³` | 43.82% | 3.0918 / 157 | 5.9140 | 23.551% | 17.309% |
+| E4+RQ-KMeans `1024³` | 49.29% | 3.2469 / 288 | 5.3396 | 22.187% | 24.417% |
+| **E4+RQ-KMeans `512×1024×2048`** | **52.77%** | **4.8491 / 485** | **5.4950** | **24.129%** | **20.921%** |
+
+容量后移相对 TIGER 的唯一 Bucket HR@1/3/5/10 差值为 `+4.16/+1.91/+1.43/+0.39pp`。使用同一 10,000 条业务键、对配对命中差值做 200,000 次固定种子非参数 bootstrap 后，95% 区间依次为 `[+3.29,+5.03]`、`[+1.27,+2.55]`、`[+0.86,+2.00]`、`[-0.12,+0.90]pp`。因此 HR@1/3/5 的 Bucket 覆盖提升成立，HR@10 的 0.39pp 尚不能排除波动。
+
+BGE+RQ-KMeans 的 Bucket HR@10 比 TIGER 低 0.36pp，E4+RQ-VAE 低 0.80pp，E4+对称 RQ-KMeans 低 0.37pp；只有容量后移在四个 K 都取得点估计最高值。对称 E4 的 Bucket−精确 HR@10 达 4.12pp，确认其历史结果确实混入明显后缀/闭合损失，但移除该损失后仍没有超过容量后移，也没有显著超过 TIGER 的 Top-10 Bucket 覆盖。
+
+两套此前在本机 A6000 评测的 E4+RQ-KMeans，本次 6000D 精确结果存在小幅硬件数值漂移：对称布局 HR@1/HR@10 从 47.99/83.42% 变为 48.03/83.57%，容量后移从 50.67/87.08% 变为 50.58/87.07%。BGE+RQ-KMeans 和 E4+RQ-VAE 则与既有 6000D 结果逐字段一致。本实验不使用这类 0.01—0.15pp 漂移判断胜负，Bucket 配对结论以上述置信区间为准。
+
+### 25.4 产物核验、结论与下一步
+
+- 正式根目录为 `outputs/eval/bucket_diagnostics_fixed10k_v1/`。四组 `valid_checkpoint_results.json` SHA256 依次为 `f98a2032ea5db498c39973eee08822b42f33fe358add234b1f02cbd87eef7246`、`9528cd457b8e001db1849da4b658996aa34ed1e728875a82ce86fa79dcd50580`、`8712853b4b756eed402dff776fa7d45af0d167366c0ac6a8fe22053b8cfe1788`、`7844ce91ba952ed7f01e413afa26a9b6553d49fac852c271f218359bcc8ef550`；
+- 四组 `candidate_trace.jsonl` 均为 `tiger-candidate-trace-v3`、10,000 行且每行 10 个候选，SHA256 依次为 `5e1cfe11b4d52b9046f68fef8072a8d4055e9eb563c4bf08c67f6a0a5292d82a`、`c2c91eca579cb96826ca663960376570019cb3dc277d404d418cd332874f061b`、`333dbcf499fdd75cf33f7c9fe7490ad68a5b73fa3dbf94999042e58f8dce8b09`、`68556a152e6cf076f46a635b311fc0b76bef1a4d2d64a0ea400e71649a08c943`；对应 manifest SHA256 为 `79f3e6ca55889d52bccaa6d74d44bd34365e3115150789e837ea8ef609f50661`、`53308e37905689f251ea62e113054b283d47af726df1d16b53fd76773e265d78`、`6eac9461f9ebe12eb86664ee8c575d36694316e9b9260ac280effad274961a2b`、`4c4ea82bf215441254d944a9d37a588cd47896310b7a09a0b4d44df5b59863c7`；
+- 独立从四份 `tiger_ids.npy` 重建目录桶并逐行复算 40,000 条轨迹，目标 code、桶大小、exact/raw/unique rank 和 unique bucket 列表均为 0 条不一致；四组各 10 个 1,000 行分片的行数、单片哈希、顺序拼接哈希和总轨迹哈希全部通过；平台日志无 traceback、OOM、失败或 batch 回退。
+
+本实验说明容量后移不是“完整 SID 已经胜出”，而是形成了一个更适合两阶段检索的折中：较小 S1 使前三层前排 Bucket 更可预测，较大 S3 把区分能力后移，但目标碰撞桶请求升至 52.77%，完整实体仍需要条件排序。它在 HR@1/3/5 的 Bucket 覆盖上显著超过 TIGER，满足进入轻量排序机制验证的门禁；HR@10 未显著提高，说明排序只能改善已召回 Bucket 内及前排顺序，不能解决主要的候选欠覆盖。
+
+下一最小实验冻结 E4+RQ-KMeans `512×1024×2048` 的前三层生成和本次候选轨迹，不重训生成模型；先使用不接触固定 10k 标签的 E4 Query–POI 连续相似度完成候选展开与轻量重排门禁，再逐项增加请求 GID/距离、历史和稳定热度。必须在固定 10k 之外校准权重，并同时报告相对自身四层生成、TIGER 和 Centered GenPOI 的 HR/NDCG；若 E4-only 排序无法恢复至少一部分 9.11pp 的首位 Bucket 空间，则停止复杂排序并转入 QD-RQ Top-32 弱权重门禁。
+
+## 26. EXP-20260819-03：容量前移 epoch-3 三层 Bucket 补充诊断
+
+### 26.1 目标与假设
+
+本实验补齐 `EXP-20260819-02` 未包含的 E4+RQ-KMeans 容量前移 `2048×1024×512`。其静态目标桶比容量后移更小；若缩小碰撞桶足以抵消 2,048 类 S1 的生成难度，容量前移应在三层 Bucket-HR 上接近或超过容量后移。反之，若容量后移仍显著领先，则冻结后移布局用于下一阶段候选展开，不再继续搜索更极端容量。
+
+### 26.2 数据、代码、配置与命令
+
+- 使用与 `EXP-20260819-01/02` 相同的固定普通 Validation 10,000 条、无约束 Beam=10 和前三层 `[S1,S2,S3]` 唯一可展开 Bucket 口径；业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 为 0；
+- Validation 子集 SHA256 为 `378090d9e5f2044163a2afaf731e75ab7fedf8244f056ed10174f66a378d680f`，来源完整 Validation 597,421 条，来源 SHA256 为 `69d2d5183b91f8a883fca8c8be3beb83debb6873c207526649f370326890e075`；
+- checkpoint 为 `outputs/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/checkpoint-16710`，epoch 3、Validation Loss `0.3114998341`，模型 SHA256 为 `fe2443af77d05a28241cf828ee6391da349e0470df9e8d80af49349d263cb535`；
+- identifier 共 2,337,178 行，容量为 `[2048,1024,512,143]`；mapping / identifier manifest SHA256 为 `639fcdb12b76ef98f1eacc9289adfc575ebcb59f7c495c2172092e496f9a5580` / `22f9544e56b27f08d7d404305179a9e9b6a1d44011a2fd0f481a1f90fd9b5226`；Tokenizer mapping SHA256 为 `f2727692ead615aa02e9c8e492dd1a4c3d8b5c16f7c1f08aeb63367f97f38e1c`；
+- 代码状态为 Git HEAD `7dd52b3437a9db41834aef638e446010d0df3610` 的 dirty worktree；评测器和方法实现 SHA256 继续为 `6cd1f0d32676c4e9aa3d73bb391c5e3cd66038b179110a0edb57d4be2663299e` / `eb42c361ae6573b545c561e545b8e5af90644b05586c08a1af9200fe608ecf8f`；
+- 在开发机单张 NVIDIA RTX A6000 上先完成 preflight 和 10 条 smoke，再按 batch 32、chunk 1,000、历史 cutoff 512 运行完整 10k。正式推理耗时 1,243.75 秒，实际 batch 32，PyTorch 峰值显存 24,258,030,080 bytes，无 OOM、batch 回退或异常退出；任务结束后显存完全释放；
+- 正式命令为：
+
+```bash
+TMPDIR=/ofs/map_search/hudan/poi_genret/outputs/tmp/ebktfw \
+  CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false \
+  PYTORCH_ALLOC_CONF=expandable_segments:True \
+  /ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/evaluate_retrieval.py \
+  --valid-file data/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl \
+  --checkpoints outputs/sft/rqkmeans_e4_bge_m3_2048x1024x512_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/checkpoint-16710 \
+  --expected-checkpoint-steps 16710 --expected-checkpoint-epochs 3 \
+  --tokenizer models/Qwen3-0.6B-RQKMeans-E4-2048x1024x512-Vocab-v1 \
+  --token-mapping-filename poi_token_mapping.json \
+  --identifier-dir outputs/pid/rqkmeans/e4_bge_m3/2048x1024x512_tiger_collision_v1 \
+  --output-dir outputs/eval/bucket_diagnostics_fixed10k_v1/rqkmeans_e4_2048x1024x512_e3 \
+  --num-beams 10 --per-device-eval-batch-size 32 --chunk-size 1000 \
+  --cutoff-len 512 --skip-data-hash --final-checkpoint-only --bucket-diagnostics
+```
+
+### 26.3 结果与配对比较
+
+| 口径 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 |
+|---|---:|---:|---:|---:|---:|
+| 容量前移精确四层 ID→POI | 50.47% | 75.34% | 82.00% | 87.01% | 69.6711% |
+| 容量前移原始 Beam 槽 Bucket | 56.39% | 78.24% | 83.60% | 87.74% | — |
+| **容量前移唯一可展开 Bucket** | **57.38%** | **80.23%** | **85.33%** | **87.74%** | — |
+
+容量前移唯一 Bucket 相对自身精确结果提高 `6.91/4.89/3.33/0.73pp`。其目标碰撞桶请求占 41.90%，目标桶平均/最大大小为 2.6286/75；每请求平均得到 5.9988 个唯一可展开桶，不可展开候选率 24.953%，重复 Bucket 候选率 15.059%。展开全部生成桶后，每请求候选 POI 数平均 12.3204，P50/P90/P95/P99/最大为 11/23/29/47/136。
+
+在同一 10,000 条业务键上做 200,000 次固定种子配对非参数 bootstrap：
+
+| 比较 | Bucket HR@1 | HR@3 | HR@5 | HR@10 |
+|---|---:|---:|---:|---:|
+| 容量前移 − TIGER | +1.85 `[+1.00,+2.70]` | +0.59 `[-0.03,+1.21]` | +0.23 `[-0.31,+0.77]` | -0.32 `[-0.82,+0.17]` |
+| **容量后移 − 容量前移** | **+2.31 `[+1.47,+3.15]`** | **+1.32 `[+0.70,+1.94]`** | **+1.20 `[+0.68,+1.72]`** | **+0.71 `[+0.23,+1.19]`** |
+
+容量前移只在 Bucket HR@1 上显著超过 TIGER，HR@3/5/10 均未形成显著提升；容量后移则在四个 K 上均显著超过容量前移。两次运行硬件不同：容量前移为本机 A6000，容量后移为平台 6000D，因此配对区间只刻画当前两份确定性候选轨迹的样本不确定性，不包含硬件/随机种子不确定性。已有同模型跨 A6000/6000D 精确指标漂移为 0.01—0.15pp，明显小于两种容量的 Bucket 差值；该结果足以用于当前研发选择，但发表级最终表仍应在同一 6000D 上补一次容量前移 replay。
+
+### 26.4 产物、核验、结论与下一步
+
+- 正式结果位于 `outputs/eval/bucket_diagnostics_fixed10k_v1/rqkmeans_e4_2048x1024x512_e3/`；`valid_checkpoint_results.json` SHA256 为 `a8197a1ec2e3002fb5e5f15c035409490548e1be9e548787aac3ba7fc4ec4688`；
+- `candidate_trace.jsonl` 为 10,000 行、每行 10 个候选，SHA256 为 `37bbc579cfcecf17a27141016cf65d98d0fdc7c39e01c700f931226ffdb2513c`，manifest SHA256 为 `1dc4009a60867c0cb667a4c0b07d3c38b506923e2d4abc6bfc1eaceef682348c`；
+- 独立从 `tiger_ids.npy` 重建容量前移目录桶，逐行复算目标 code、桶大小、精确/原始/唯一排名和去重桶列表；10,000 行与 10 个分片的 mismatch 均为 0，总轨迹及分片哈希全部通过；
+- 容量前移把目标碰撞率从后移的 52.77% 降到 41.90%，但更难的 2,048 类 S1 使 Bucket HR@1/3/5/10 全部下降。由此冻结容量后移 `512×1024×2048` 作为两阶段候选生成布局，停止更极端容量搜索；它展开全部唯一桶后平均 19.2978 个候选 POI，P95/P99/最大为 58/114/485，离线全量重排成本可控。
+
+下一最小实验不再训练 SID/SFT：冻结容量后移的 10,000 条候选轨迹与目录映射，先用已有 E4 Query–POI 连续相似度对展开候选做无可学习权重的全局重排，并同时比较自身四层生成、TIGER 和 Centered GenPOI。若 E4-only 连自身 HR@1/NDCG@10 都不能稳定提高，则停止复杂融合，转入 QD-RQ Top-32 弱权重门禁；只有 E4-only 正向时，才在固定 10k 之外的 Train 时间留出集校准生成分、地理、历史和稳定热度，并逐项做增量消融。
+
+## 27. EXP-20260819-04：容量后移 epoch-3 Gold-prefix Teacher-Forcing 补充诊断
+
+### 27.1 目标、指标边界与假设
+
+本实验补齐 E4+RQ-KMeans 容量后移 `512×1024×2048` 缺失的 epoch-3 Teacher-Forcing 诊断，并与 TIGER、E4 对称 `1024³`、E4 容量前移 `2048×1024×512` 组成四行完整对照。实验不训练模型、不修改 SID，也不把 Teacher-Forcing 与 `EXP-20260819-01/02/03` 的 Bucket-HR 混为同一指标。
+
+- Gold-prefix Teacher-Forcing 在正确用户 Prompt 和正确目标前缀下，逐位置读取目标 Token logits；`S1+S2+S3` 表示三个 gold-prefix 位置的 Top-1 同时正确，不累计模型自产生的前缀错误；
+- Bucket-HR 从用户 Prompt 开始无约束自由生成 Beam=10，再解析生成序列的前三层 `[S1,S2,S3]`，删除不可展开与重复 Bucket 后统计目标桶排名；它累计模型自产生的前缀错误、Beam 候选竞争以及不可展开/重复 Bucket 去重影响，但前三层解析本身不要求 `C`、闭合符或 EOS 合法；
+- Teacher-Forcing Top-10 表示每个 Gold Token 在各自正确前缀条件下分别进入局部 Top-10，不等价于整条目标前缀进入 Beam=10。容量后移的三级 Teacher-Forcing Top-10 为 91.81%，而自由生成 Bucket-HR@10 为 88.45%，两者差异直接证明 Bucket 诊断不是 Teacher-Forcing 的重复运行。
+
+假设是：如果容量后移的 Bucket 前排提升确实来自前三层更可学习，而不只是 Beam/去重偶然性，那么其三级累计 Teacher-Forcing Top-1 应高于 TIGER、对称和容量前移；如果完整四层仍未提高，则损失应集中在请求加权更重的 `C>0` 碰撞后缀。
+
+### 27.2 数据、代码、配置与命令
+
+- 使用容量后移正式 Validation 子集 `outputs/eval/legal_path_fixed10k_v1/rqkmeans_e4_512x1024x2048_e3/validation_subset_10000.jsonl`，恰好 10,000 条，文件 SHA256 为 `9272452e1d31bea8197eef370af22b55c6724d79a71402e312203e451cb52f65`；与另外三行的 `order_id + searchid` 顺序完全一致，业务键 SHA256 均为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`；
+- checkpoint 为 `outputs/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/checkpoint-16710`，epoch 3，模型 SHA256 复用已验证值 `0cfda643c162999bebbfb28c1b591b0b13b1eeee8b5cf6078752e796b5a8ca53`；
+- Tokenizer 为 `models/Qwen3-0.6B-RQKMeans-E4-512x1024x2048-Vocab-v1`，Token mapping SHA256 为 `03b4641437048e29844b58e63854f55b14f59089aaea1a46f85e11c002857523`，四位置容量为 `[512,1024,2048,485]`；
+- 代码状态为 Git HEAD `7dd52b3437a9db41834aef638e446010d0df3610` 的 dirty worktree；`scripts/sft/diagnose_sid_teacher_forcing.py` 运行时 SHA256 为 `a87d2796a7b2795c40e0f48e936a0f7537c8ec9c97a1bb01256c78df45362763`；
+- 开发机单张 NVIDIA RTX A6000 先完成 100 条 smoke，再按 batch 32、历史 `cutoff_len=512` 运行正式 10k；正式目标位置前向耗时 109.74 秒，实际 batch 32，峰值显存 6,727,436,800 bytes，无 OOM、batch 回退或异常；
+- 正式命令为：
+
+```bash
+TMPDIR=/ofs/map_search/hudan/poi_genret/outputs/tmp/tfback \
+  CUDA_VISIBLE_DEVICES=0 \
+  /ofs/map_search/hudan/envs/poi-gr/bin/python \
+  scripts/sft/diagnose_sid_teacher_forcing.py \
+  --method tiger \
+  --data-file outputs/eval/legal_path_fixed10k_v1/rqkmeans_e4_512x1024x2048_e3/validation_subset_10000.jsonl \
+  --checkpoint outputs/sft/rqkmeans_e4_bge_m3_512x1024x2048_history10_query_gid_tiger_collision_v1_gpu4_a100_e3/checkpoint-16710 \
+  --tokenizer models/Qwen3-0.6B-RQKMeans-E4-512x1024x2048-Vocab-v1 \
+  --token-mapping-filename poi_token_mapping.json \
+  --token-capacities 512 1024 2048 485 \
+  --output-dir outputs/eval/sid_teacher_forcing_fixed10k_v4_capacity_back/rqkmeans_e4_512x1024x2048_e3 \
+  --expected-epoch 3 --cutoff-len 512 --batch-size 32 \
+  --checkpoint-rows 1000 --skip-model-hash
+```
+
+### 27.3 四组完整结果
+
+逐位置 `S2/S3` 是给定全部 Gold 前缀后的条件 Top-1；累计列要求对应前三层同时正确：
+
+| 方法 / 容量 | S1 条件 Top-1 | S2 条件 Top-1 | S3 条件 Top-1 | 累计 S1+S2 | 累计 S1+S2+S3 | C 全部 Top-1 | 完整四层 ID Top-1 | Target PPL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | 75.06% | 81.04% | **85.70%** | 61.75% | 53.98% | **94.07%** | **50.76%** | **1.4151** |
+| E4 RQ-KMeans `1024³` | 80.70% | 81.75% | 84.01% | 66.72% | 56.83% | 88.21% | 49.01% | 1.4939 |
+| E4 RQ-KMeans `2048×1024×512` | **82.25%** | 78.32% | 84.47% | 65.08% | 55.97% | 90.72% | 49.91% | 1.4391 |
+| **E4 RQ-KMeans `512×1024×2048`** | 79.85% | **85.30%** | 82.82% | **69.40%** | **58.77%** | 86.76% | 49.89% | 1.4331 |
+
+按碰撞后缀和结构位置分组：
+
+| 方法 / 容量 | `C=0` 样本 | `C=0` 的 C / 完整 ID Top-1 | `C>0` 样本 | `C>0` 的 C / 完整 ID Top-1 | `</TARGET_POI>` Top-1 | 完整序列 Top-1 |
+|---|---:|---:|---:|---:|---:|---:|
+| TIGER `1024³` | 7,644 | **98.09% / 52.11%** | 2,356 | **81.03% / 46.39%** | 99.70% | **50.64%** |
+| E4 RQ-KMeans `1024³` | 6,585 | 95.76% / 50.04% | 3,415 | 73.65% / **47.03%** | 94.19% | 46.09% |
+| E4 RQ-KMeans `2048×1024×512` | 7,250 | 96.94% / 51.06% | 2,750 | 74.33% / 46.87% | 99.67% | 49.76% |
+| **E4 RQ-KMeans `512×1024×2048`** | 6,244 | 96.33% / 51.67% | **3,756** | 70.85% / 46.94% | **99.85%** | 49.85% |
+
+Gold-prefix 局部 Top-10 累计结果：
+
+| 方法 / 容量 | S1 Top-10 | 累计 S1+S2 Top-10 | 累计 S1+S2+S3 Top-10 | 完整四层 ID Top-10 |
+|---|---:|---:|---:|---:|
+| TIGER `1024³` | **96.29%** | **93.79%** | **92.15%** | **92.04%** |
+| E4 RQ-KMeans `1024³` | 96.04% | 93.42% | 91.86% | 91.66% |
+| E4 RQ-KMeans `2048×1024×512` | 95.84% | 92.65% | 91.43% | 91.37% |
+| **E4 RQ-KMeans `512×1024×2048`** | 96.12% | 93.55% | 91.81% | 91.61% |
+
+与无约束自由生成 Bucket 结果合并观察：
+
+| 方法 / 容量 | TF 累计三级 Top-1 | 自由生成 Bucket HR@1/3/5/10 | 自由生成精确 HR@1/10 |
+|---|---:|---:|---:|
+| TIGER `1024³` | 53.98% | 55.53/79.64/85.10/88.06% | 51.87/87.16% |
+| E4 RQ-KMeans `1024³` | 56.83% | 58.25/80.81/85.57/87.69% | 48.03/83.57% |
+| E4 RQ-KMeans `2048×1024×512` | 55.97% | 57.38/80.23/85.33/87.74% | 50.47/87.01% |
+| **E4 RQ-KMeans `512×1024×2048`** | **58.77%** | **59.69/81.55/86.53/88.45%** | 50.58/87.07% |
+
+### 27.4 产物、结论与下一步
+
+- 正式结果位于 `outputs/eval/sid_teacher_forcing_fixed10k_v4_capacity_back/rqkmeans_e4_512x1024x2048_e3/`；`result.json` / `progress.json` 均为 `completed`、样本计数均为 10,000，SHA256 为 `a7e7422b4597122f28321f1b623ad0a6c9a08d0af1d53b841e231694502e2e32` / `0c45730c26f4ce116e6488a4b0a3599b1b53a5a3bf021cc5a5243558dc23a61f`；
+- 容量后移的累计三级 Top-1 为 58.77%，相对 TIGER、对称、前移高 4.79/1.94/2.80pp；它同时取得自由生成 Bucket HR@1/3/5/10 的四项最高值。因此容量后移 Bucket 前排提升具有逐层 Query 可学习性证据，不是只由 Beam 去重或桶大小产生；
+- 容量后移的优势来自较小 S1 后更强的 S2 累计传递和较大 S3 容量，而不是每个条件位置都更强：其 S1 低于前移 2.40pp，S3 条件 Top-1 也低于 TIGER 2.88pp，但累计三级仍最高；
+- 前三层收益没有传入完整 ID：容量后移 `C>0` 样本最多（3,756），其 `C>0` 条件 C Top-1 最低（70.85%），完整四层 ID 只有 49.89%，与前移 49.91% 基本相同并低于 TIGER 50.76%。这把容量后移的主要瓶颈进一步定位到请求热点碰撞和无语义 `C`，不是前三层整体不可学习；
+- Bucket 诊断仍有独立必要性：Teacher-Forcing 只能回答 Gold 前缀下的局部可学习性，Bucket 才回答自由生成 Beam 中目标前三层桶能否实际出现。两者方向一致构成相互验证，但不能互相替代。
+
+下一步不再补相同协议的容量 Teacher-Forcing，也不因本结果直接进入排序实现。结合用户对召回阶段的边界确认，后续若继续 E4+RQ-KMeans，应优先设计固定长度、Query 可预测的碰撞表示或碰撞位置训练目标，让完整生成保留前三层收益；任何候选先用 Train 时间留出验证请求加权碰撞、`C` 条件准确率和三级前缀保持率，再决定是否运行完整 SFT。
+
+## 28. `EXP-20260821-02`：五组量化候选四类泛化 Validation 10k
+
+### 28.1 目标、数据与协议
+
+本实验把已经完成固定随机 Validation 10k 的五组 Embedding × Quantizer 候选，统一放到四类互斥泛化专项集上评测。目标不是重新比较静态 SID 唯一率，而是回答向量增强、量化器替换和容量方向能否改善 Query→完整 SID 的分布外召回。
+
+- 五组候选为 BGE+RQ-KMeans `1024³`、E4+RQ-VAE `1024³`、E4+RQ-KMeans 容量后移 `512×1024×2048`、对称 `1024³` 和容量前移 `2048×1024×512`；全部使用 epoch-3 `checkpoint-16710`；
+- 泛化套件与 `EXP-20260821-01` 相同：四组各 10,000 条，套件 manifest SHA256 为 `d274413e82dd175f28e0510146c2d1a46213f6f1b553d19094a1efa6ac601539`，四组定义分别为已见 Query/未见 Pair、新 Query/已见目标、Train 频次 1—5 的长尾目标和 Train 频次 0 的冷目标；
+- 固定 Qwen3-0.6B、无约束 Beam=10、batch 32、`cutoff_len=1024`，不启用合法路径 Trie。由于各方法使用各自 Tokenizer 和 identifier mapping，Valid ID Rate 只作方法内部诊断，不作为跨方法主排序依据；
+- 正式运行基于 Git HEAD `7dd52b3437a9db41834aef638e446010d0df3610` 的非干净工作树。统一 launcher 和 TIGER 协议评测入口 SHA256 分别为 `90d7a53dfa228515ebd8796521a31b20f04bfa797f07cccd38f14f8084e361de`、`6cd1f0d32676c4e9aa3d73bb391c5e3cd66038b179110a0edb57d4be2663299e`；
+- 平台使用 2×RTX 6000D/RTX PRO 6000，两条 GPU lane 并行、lane 内串行。正式命令为：
+
+```bash
+bash launchers/run_evaluate_generalization_innovation_sft_epoch3_2x6000d.sh
+```
+
+### 28.2 四组宏平均与论文基线对照
+
+所有指标均为百分比；Centered GenPOI 使用论文复现所需 SSP+TCG，TIGER、GNPR 及五组量化候选使用各自既定无约束主协议，因此下表比较的是完整方法结果，不是单独解码模块的因果消融。
+
+| 方法 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | 相对 TIGER HR@1/HR@10/NDCG@10 |
+|---|---:|---:|---:|---:|---:|---:|
+| Centered GenPOI | **25.2525** | **40.0525** | **46.5775** | **54.1375** | **39.0484** | +0.2600 / +2.7675 / +1.3535 |
+| TIGER | 24.9925 | 38.9850 | 44.7575 | 51.3700 | 37.6949 | 0 / 0 / 0 |
+| **BGE + RQ-KMeans `1024³`** | **24.6500** | **38.2125** | **44.0275** | **50.4625** | **37.0584** | **-0.3425 / -0.9075 / -0.6365** |
+| E4 + RQ-KMeans `2048×1024×512` | 24.0325 | 37.7550 | 43.5750 | 50.0825 | 36.5579 | -0.9600 / -1.2875 / -1.1370 |
+| E4 + RQ-KMeans `512×1024×2048` | 23.6225 | 37.7650 | 43.6875 | 50.4100 | 36.5115 | -1.3700 / -0.9600 / -1.1834 |
+| GHR EXP-09 | 24.4050 | 36.8425 | 41.9600 | 47.5350 | 35.6002 | -0.5875 / -3.8350 / -2.0947 |
+| E4 + RQ-KMeans `1024³` | 22.6700 | 35.8500 | 41.4750 | 47.8250 | 34.7579 | -2.3225 / -3.5450 / -2.9370 |
+| E4 + RQ-VAE `1024³` | 22.4350 | 35.8550 | 41.4475 | 47.9150 | 34.6673 | -2.5575 / -3.4550 / -3.0276 |
+| GHR EXP-14 | 23.7125 | 35.5875 | 40.4425 | 45.6150 | 34.3402 | -1.2800 / -5.7550 / -3.3547 |
+| GNPR-SID | 19.0725 | 29.4775 | 33.6600 | 37.7675 | 28.2409 | -5.9200 / -13.6025 / -9.4540 |
+
+BGE+RQ-KMeans 是七组创新候选中宏平均最接近 TIGER 的一组，但 HR@1/HR@10/NDCG@10 仍低 `0.3425/0.9075/0.6365pp`。没有创新候选在三项宏平均主指标上超过 TIGER；所有候选均高于 GNPR，但不能把“超过较弱论文基线”作为创新成立依据。
+
+### 28.3 分子集结果与局部收益
+
+表中每格依次为 `HR@1 / HR@10 / NDCG@10`，单位为百分比。
+
+| 方法 | 已见 Query/未见 Pair | 新 Query/已见目标 | 长尾目标 | 冷目标 |
+|---|---:|---:|---:|---:|
+| Centered GenPOI | **18.93 / 63.89 / 40.3454** | 49.07 / **76.74 / 63.2055** | 25.73 / **55.11 / 39.5168** | **7.28 / 20.81 / 13.1261** |
+| TIGER | 17.29 / 60.07 / 37.8330 | **49.59** / 75.30 / 62.8133 | 26.01 / 52.33 / 38.3206 | 7.08 / 17.78 / 11.8127 |
+| BGE + RQ-KMeans `1024³` | 17.12 / 58.55 / 36.8369 | 48.69 / 73.70 / 61.4121 | 25.72 / 51.29 / 37.7998 | 7.07 / **18.31 / 12.1847** |
+| E4 + RQ-VAE `1024³` | 16.20 / 57.46 / 35.8282 | 45.09 / 72.79 / 59.0478 | 24.09 / 50.30 / 36.4523 | 4.36 / 11.11 / 7.3409 |
+| E4 + RQ-KMeans `512×1024×2048` | 16.43 / **60.39 / 37.5333** | 46.78 / 74.71 / 60.8654 | 26.07 / **53.05 / 38.7430** | 5.21 / 13.49 / 8.9042 |
+| E4 + RQ-KMeans `1024³` | 15.15 / 56.01 / 34.6673 | 45.17 / 71.81 / 58.5774 | 25.21 / 50.98 / 37.3417 | 5.15 / 12.50 / 8.4450 |
+| E4 + RQ-KMeans `2048×1024×512` | **17.33 / 59.93 / 37.6794** | 47.67 / **74.85 / 61.4296** | **26.30 / 52.77 / 38.7741** | 4.83 / 12.78 / 8.3486 |
+
+- 长尾目标是 E4+RQ-KMeans 唯一稳定出现正向信号的切片。容量前移相对 TIGER 的 HR@1/HR@10/NDCG@10 为 `+0.29/+0.44/+0.4535pp`，容量后移为 `+0.06/+0.72/+0.4224pp`；但二者仍未超过 Centered GenPOI 的 HR@10/NDCG@10；
+- 冷目标上 BGE+RQ-KMeans 的 HR@1 与 TIGER 基本持平（-0.01pp），HR@10/NDCG@10 高 `0.53/0.3720pp`，说明量化器替换有小幅 Top-10 局部收益；E4 四组均明显回落，表明 Train Query 聚合得到的 POI 向量没有迁移到完全无 Train 目标；
+- 容量后移比容量前移更保留 Top-K，容量前移在 HR@1 和 NDCG@10 略好；对称 E4+RQ-KMeans 在四类宏平均中仍是三种容量布局最差，说明容量方向影响真实存在，但不足以改变完整方法排序；
+- 已见 Query/未见 Pair 上容量后移 HR@10 比 TIGER 高 0.32pp，但 NDCG@10 低 0.2997pp；这是“目标桶进入候选但前排不足”的局部现象，不能视为整体召回提升。
+
+### 28.4 工程核验、产物、结论与下一步
+
+- 首次运行在两组 GHR 共 8 个单元完成后，五个 TIGER 协议候选因评测入口默认查找不存在的 `tiger_token_mapping.json` 而退出，没有生成伪结果；launcher 已显式增加 `--token-mapping-filename poi_token_mapping.json`。重跑自动复用 8 个已完成单元并补齐剩余 20 个；
+- 最终 28 个 `valid_checkpoint_results.json` 均为 `completed`、各 10,000 条、目标错位为 0、未启用合法路径约束；统一汇总重算与明细完全一致，28 份平台日志无 Traceback、OOM、CUDA 或 child failure，实际 batch 均为 32；
+- 产物位于 `outputs/eval/generalization_validation_suite_10k_v1/innovation_sft_epoch3_unconstrained_cutoff1024_v1/`，`matrix_summary.json` SHA256 为 `4bc50d4f898fb82296f6a49609e05da92164b77008b50769c7fa0beb714f2bae`；28 个单元推理耗时 613.25—865.29 秒，平均 701.89 秒，峰值显存约 21.62—28.11 GiB；
+- 结论：静态 POI Embedding 和 SID 唯一性改善没有自动转化为 Query→完整 SID 的跨分布提升。BGE+RQ-KMeans 是当前最稳健创新候选，E4+RQ-KMeans 只在长尾切片兑现局部收益，E4+RQ-VAE 和对称 E4+RQ-KMeans 明显退化。结果继续支持“前三层可学习性收益被碰撞后缀、完整序列优化和冷目标缺少监督抵消”的诊断；
+- 当前四组均为单 checkpoint、单训练 seed 的 10k 专项集，未做 paired bootstrap；小于约 0.5pp 的差异只作为方向信号，不作为显著胜出结论。下一步不再搜索更多静态码本或容量组合，优先完成 MMBERT 配对 SFT 和 GHR 固定两层后缀的端到端检验；新候选必须同时报告随机 10k、四类泛化宏平均、冷/长尾切片和完整 ID，而不能只用静态唯一率或前三层 Bucket 指标宣称提升。

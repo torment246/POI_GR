@@ -1,6 +1,6 @@
 ---
 name: make-poi-genret-ppt
-description: Create or edit POI generative-retrieval project PowerPoint files (.pptx) in the established Hu Dan 0727/0810 phase-report style. Use for new progress decks, extending an existing report, converting experiment records into slides, restyling draft slides, or adding speaker notes without changing slide bodies. Enforce template reuse, restrained colors, table-first experiment reporting, no decorative boxes or unsupported square glyphs, evidence-backed metrics from docs/outputs, and before/after PPTX validation.
+description: Create or edit POI generative-retrieval project PowerPoint files (.pptx) in the established Hu Dan 0727/0810 phase-report style. Use for new progress decks, extending an existing report, converting experiment records into slides, or restyling draft slides. Enforce template reuse, restrained colors, table-first experiment reporting, no decorative boxes or unsupported square glyphs, evidence-backed metrics from docs/outputs, and before/after PPTX validation.
 ---
 
 # POI GenRet 汇报 PPT
@@ -23,7 +23,7 @@ Before editing, state the current step, what will not change, and the acceptance
 - Never infer missing metrics or describe a stopped/failed run as successful. Distinguish Trainer success from an outer platform-wrapper failure.
 - Keep comparison cells protocol-compatible. State important limitations such as fixed 10k Validation, method-specific constrained decoding, or missing Test results.
 - Lead each slide with one conclusion. Use tables for repeated metrics and exact mappings; use prose only for interpretation.
-- Put implementation detail, failure causes, fixes, metric definitions, and caveats in speaker notes when they would overload the slide. Notes must supplement rather than repeat visible text.
+- Speaker notes are not part of the default deliverable. Do not create, expand, or rewrite notes unless the user explicitly asks for notes in that task; simplify or split overloaded visible content instead.
 
 ## Preserve the validated visual language
 
@@ -46,8 +46,9 @@ For exact palette, typography, table, layout, and notes rules, follow [reference
 - Split dense content across slides before reducing body text below the established template size.
 - Preserve user-edited wording unless the user explicitly requests copyediting.
 
-### Add notes only
+### Add notes only when explicitly requested
 
+- Do not enter this mode from an ordinary PPT creation, extension, or revision request.
 - Change only speaker-note parts and required OOXML relationships.
 - Do not alter slide text, tables, pictures, shapes, geometry, colors, masters, or ordering.
 - Capture canonical hashes and shape counts before editing; compare them after saving.
@@ -61,7 +62,7 @@ For exact palette, typography, table, layout, and notes rules, follow [reference
 
 ## Validate before delivery
 
-1. Reopen the PPTX and verify slide count, slide order, all expected notes, and ZIP integrity.
+1. Reopen the PPTX and verify slide count, slide order, and ZIP integrity. Verify notes only when the user explicitly requested them.
 2. Run:
 
    ```bash

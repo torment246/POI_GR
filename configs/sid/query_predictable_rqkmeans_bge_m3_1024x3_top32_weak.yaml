@@ -1,0 +1,43 @@
+experiment_id: QD-RQ-R3-BGE-E4Q-1024x3-TOP32-WEAK-S100K
+
+data:
+  content_embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  fused_embeddings: outputs/embeddings/query_augmented_bge_m3/e4_alpha0p30_beta0p85_full_v1/embeddings.npy
+  query_aggregates: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1/e2_query_weighted.npy
+  covered_poi_rows: outputs/embeddings/query_augmented_bge_m3/query_poi_aggregates_v1/covered_poi_rows.npy
+  category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+  category_means: outputs/embeddings/query_augmented_bge_m3/query_category_residual_boundary_v1/category_query_means.npy
+  beta: 0.85
+  fusion_alpha: 0.30
+
+initialization:
+  reference_dir: outputs/sid/rqkmeans/bge_m3/screen/gpu_greedy_1024x3_s100k_i20_r1
+  sample_cache_dir: outputs/sid/query_predictable_rqkmeans/cache/bge_e4q_covered_only_s100k_v1
+
+quantizer:
+  codebook_sizes: [1024, 1024, 1024]
+  query_weights: [0.0, 0.05, 0.15]
+  routing_mode: content_preserving
+  query_support_tau: 20.0
+  iterations: 1
+  content_top_t: 32
+
+validation:
+  query_embeddings: outputs/evaluation/sft_validation_10k_v1/query_embeddings/bge_m3_no_instruction.npy
+  expected_query_embeddings_sha256: 98e2032b86b76cf42991dc1d1f4967ff456661fb32fbae185652163c85bf70e0
+  query_mapping: outputs/evaluation/sft_validation_10k_v1/query_embeddings/bge_m3_no_instruction_rows.jsonl
+  expected_query_mapping_sha256: d512aa206468ea672b473ce38c353eca703c64289ac890d9a935cd3c9b2f855f
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  expected_poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  expected_rows: 10000
+
+runtime:
+  chunk_rows: 2048
+  scan_chunk_rows: 2048
+
+expected:
+  rows: 2337178
+  dimension: 1024
+  sample_indices_sha256: 2ff976ba4c216782fb79027fd5dae95e9fb23b5d0a93885345e18d3c62126afe
+
+output_dir: outputs/sid/query_predictable_rqkmeans/r3_bge_e4q/screen/content_frozen_top32_lambda_0_0p05_0p15_tau20_s100k_v2

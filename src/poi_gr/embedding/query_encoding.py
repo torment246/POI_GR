@@ -298,12 +298,15 @@ def _signature(
     total_rows: int,
     embedding_dim: int,
 ) -> str:
+    model_payload = asdict(config.model)
+    if config.model.backend == "sentence_transformers":
+        model_payload.pop("backend")
     payload = {
         "schema_version": SCHEMA_VERSION,
         "stats_manifest_sha256": stats_manifest_sha256,
         "total_rows": total_rows,
         "source_model_config": str(config.source_model_config),
-        "model": {**asdict(config.model), "path": str(config.model.path)},
+        "model": {**model_payload, "path": str(config.model.path)},
         "output_dtype": config.output.embedding_dtype,
         "embedding_dim": embedding_dim,
     }

@@ -23,18 +23,31 @@ from poi_gr.methods.catalog import (  # noqa: E402
 
 
 class MethodCatalogTest(unittest.TestCase):
-    def test_repository_catalog_has_one_current_and_three_baselines(self) -> None:
+    def test_repository_catalog_has_expected_methods(self) -> None:
         catalog = load_method_catalog(
             PROJECT_ROOT / "configs/methods",
             PROJECT_ROOT,
         )
         self.assertEqual(
             set(catalog),
-            {"current_main_v1", "genpoi", "tiger", "gnpr_sid"},
+            {
+                "current_main_v1",
+                "genpoi",
+                "tiger",
+                "gnpr_sid",
+                "qgr_sid",
+                "ghr_sid",
+            },
         )
         self.assertEqual(catalog["current_main_v1"].group, "current")
+        self.assertEqual(catalog["qgr_sid"].group, "innovation")
+        self.assertEqual(catalog["ghr_sid"].group, "innovation")
         self.assertEqual(
-            {spec.group for key, spec in catalog.items() if key != "current_main_v1"},
+            {
+                spec.group
+                for key, spec in catalog.items()
+                if key not in {"current_main_v1", "qgr_sid", "ghr_sid"}
+            },
             {"baseline"},
         )
 
@@ -90,6 +103,18 @@ class MethodCatalogTest(unittest.TestCase):
         self.assertEqual(genpoi.status, "partial")
         statuses = {stage.status for stage in genpoi.stages}
         self.assertNotEqual(statuses, {"ready"})
+
+        qgr_sid = catalog["qgr_sid"]
+        self.assertEqual(qgr_sid.status, "partial")
+        self.assertEqual(qgr_sid.stage("identifier").status, "partial")
+        self.assertEqual(qgr_sid.stage("train").status, "missing")
+        self.assertFalse(qgr_sid.identifier["request_dependent_identifier"])
+
+        ghr_sid = catalog["ghr_sid"]
+        self.assertEqual(ghr_sid.status, "implemented")
+        self.assertTrue(all(stage.status == "ready" for stage in ghr_sid.stages))
+        self.assertFalse(ghr_sid.identifier["request_dependent_identifier"])
+        self.assertFalse(ghr_sid.identifier["query_used_to_build_identifier"])
 
     def test_missing_repository_command_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

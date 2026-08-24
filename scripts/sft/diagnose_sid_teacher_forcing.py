@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -22,6 +24,11 @@ from poi_gr.methods.gnpr.eval import (  # noqa: E402
     GnprEvalError,
     load_gnpr_token_ids,
     parse_target_codes as parse_gnpr_target,
+)
+from poi_gr.methods.ghr_sid.eval import (  # noqa: E402
+    GhrEvalError,
+    load_ghr_id_index,
+    load_ghr_token_ids,
 )
 from poi_gr.methods.tiger.eval import (  # noqa: E402
     TigerEvalError,
@@ -54,6 +61,7 @@ class EncodedExample:
     identifier_indices: tuple[int, ...]
     group: str
     context_indices: tuple[int, ...] = ()
+    conditional_tail_indices: tuple[int, ...] = ()
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,15 +70,46 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--method",
-        choices=("tiger", "gnpr", "genpoi"),
+        choices=("tiger", "gnpr", "genpoi", "ghr"),
         required=True,
     )
     parser.add_argument("--data-file", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path, required=True)
+    parser.add_argument(
+        "--token-mapping-filename",
+        default="tiger_token_mapping.json",
+        help="TIGER/RQ-KMeans Tokenizer 目录内的 Token 映射文件名。",
+    )
+    parser.add_argument(
+        "--token-capacities",
+        type=int,
+        nargs=4,
+        default=(1024, 1024, 1024, 306),
+        metavar=("S1", "S2", "S3", "C"),
+        help="TIGER/RQ-KMeans 四个位置的 Token 容量。",
+    )
+    parser.add_argument(
+        "--identifier-dir",
+        type=Path,
+        help="GHR identifier 目录；--method ghr 时必填。",
+    )
+    parser.add_argument(
+        "--token-source-file",
+        type=Path,
+        help="GHR SFT special_tokens.json；--method ghr 时必填。",
+    )
+    parser.add_argument(
+        "--tiger-c-positive-reference-file",
+        type=Path,
+        help=(
+            "可选 TIGER 固定 10k Messages；仅用于 GHR，并严格筛选同业务键下"
+            "目标 collision code > 0 的样本。"
+        ),
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--expected-epoch", type=float, default=3.0)
-    parser.add_argument("--cutoff-len", type=int, default=512)
+    parser.add_argument("--cutoff-len", type=int, default=1024)
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -123,6 +162,59 @@ def load_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _record_alignment_key(record: Mapping[str, Any]) -> tuple[str, str, str]:
+    values = tuple(record.get(name) for name in ("sample_id", "order_id", "searchid"))
+    if not all(isinstance(value, str) and value for value in values):
+        raise TeacherForcingError("评测样本缺少 sample_id/order_id/searchid 对齐键")
+    return values  # type: ignore[return-value]
+
+
+def _ordered_alignment_sha256(records: Sequence[Mapping[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update("\t".join(_record_alignment_key(record)).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def select_tiger_c_positive_records(
+    records: Sequence[dict[str, Any]],
+    reference_records: Sequence[Mapping[str, Any]],
+    *,
+    token_capacities: Sequence[int],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select rows whose aligned TIGER target uses a non-zero collision code."""
+
+    if len(records) != 10_000 or len(reference_records) != 10_000:
+        raise TeacherForcingError("TIGER C>0 筛选要求两侧输入均恰好为 10,000 条")
+    capacities = tuple(int(value) for value in token_capacities)
+    if len(capacities) != 4:
+        raise TeacherForcingError("TIGER Token 容量必须恰好包含四层")
+
+    selected: list[dict[str, Any]] = []
+    for row_number, (record, reference) in enumerate(
+        zip(records, reference_records),
+        start=1,
+    ):
+        if _record_alignment_key(record) != _record_alignment_key(reference):
+            raise TeacherForcingError(f"TIGER 参考集第 {row_number} 行业务键未对齐")
+        _, target_content, _ = assistant_content(reference)
+        codes = parse_tiger_target(target_content, capacities)
+        if codes[3] > 0:
+            selected.append(record)
+
+    if len(selected) != 2_356:
+        raise TeacherForcingError(
+            f"固定 10k 的 TIGER C>0 样本应为 2,356 条，实际为 {len(selected):,} 条"
+        )
+    return selected, {
+        "selection": "aligned TIGER target collision code > 0",
+        "source_rows": len(records),
+        "selected_rows": len(selected),
+        "selected_alignment_sha256": _ordered_alignment_sha256(selected),
+    }
+
+
 def assistant_content(record: Mapping[str, Any]) -> tuple[str, str, str]:
     messages = record.get("messages")
     if (
@@ -150,7 +242,13 @@ def encode_tiger_example(
     cutoff_len: int,
 ) -> EncodedExample:
     user_content, target_content, sample_id = assistant_content(record)
-    codes = parse_tiger_target(target_content)
+    capacities = (
+        len(tokens.s1),
+        len(tokens.s2),
+        len(tokens.s3),
+        len(tokens.collision),
+    )
+    codes = parse_tiger_target(target_content, capacities)
     prompt_ids, target_ids = encode_prompt_like_training(
         tokenizer=tokenizer,
         template=template,
@@ -183,7 +281,11 @@ def encode_tiger_example(
         ),
         semantic_indices=(1, 2, 3),
         identifier_indices=(1, 2, 3, 4),
-        group="fixed_four_token",
+        group=(
+            "collision_suffix_zero"
+            if codes[3] == 0
+            else "collision_suffix_nonzero"
+        ),
     )
 
 
@@ -312,6 +414,79 @@ def encode_genpoi_example(
     )
 
 
+def encode_ghr_example(
+    record: Mapping[str, Any],
+    *,
+    tokenizer: Any,
+    template: Any,
+    tokens: Any,
+    cutoff_len: int,
+    collision_prefixes: set[tuple[int, int, int]] | None = None,
+) -> EncodedExample:
+    """Encode one GHR target while preserving its frozen TIGER prefix."""
+
+    user_content, target_content, sample_id = assistant_content(record)
+    prompt_ids, target_ids = encode_prompt_like_training(
+        tokenizer=tokenizer,
+        template=template,
+        user_content=user_content,
+        target_content=target_content,
+        cutoff_len=cutoff_len,
+    )
+    if (
+        len(target_ids) < 5
+        or target_ids[0] != tokens.target_open
+        or target_ids[-1] != tokens.target_close
+    ):
+        raise TeacherForcingError(f"GHR 目标结构非法：{sample_id}")
+    try:
+        logical_codes = tuple(
+            tokens.token_to_logical[int(token_id)] for token_id in target_ids[1:-1]
+        )
+    except KeyError as error:
+        raise TeacherForcingError(f"GHR 目标包含非法 identifier Token：{sample_id}") from error
+    if not (
+        tokens.minimum_identifier_length
+        <= len(logical_codes)
+        <= tokens.maximum_identifier_length
+    ):
+        raise TeacherForcingError(f"GHR identifier 长度越界：{sample_id}")
+    if len(logical_codes) < 3:
+        raise TeacherForcingError(f"GHR identifier 缺少 TIGER 三层前缀：{sample_id}")
+    expected = [
+        tokens.target_open,
+        *(tokens.logical_to_token[code] for code in logical_codes),
+        tokens.target_close,
+    ]
+    if target_ids != expected:
+        raise TeacherForcingError(f"GHR 目标 Token 编码不一致：{sample_id}")
+
+    prefix = tuple(int(value) for value in logical_codes[:3])
+    if collision_prefixes is None:
+        group = f"identifier_length_{len(logical_codes)}"
+    else:
+        group = "base_collision" if prefix in collision_prefixes else "base_singleton"
+    suffix_count = len(logical_codes) - 3
+    return EncodedExample(
+        sample_id=sample_id,
+        prompt_ids=tuple(int(value) for value in prompt_ids),
+        target_ids=tuple((*expected, tokens.eos)),
+        position_names=(
+            "target_open",
+            "sid_1",
+            "sid_2",
+            "sid_3",
+            *(f"suffix_{position}" for position in range(1, suffix_count + 1)),
+            "target_close",
+            "eos",
+        ),
+        semantic_indices=(1, 2, 3),
+        identifier_indices=tuple(range(1, len(logical_codes) + 1)),
+        group=group,
+        conditional_tail_indices=tuple(range(4, len(expected))),
+    )
+
+
 def encode_batch(
     records: Sequence[Mapping[str, Any]],
     *,
@@ -320,26 +495,34 @@ def encode_batch(
     template: Any,
     tokens: Any,
     cutoff_len: int,
+    ghr_collision_prefixes: set[tuple[int, int, int]] | None = None,
 ) -> list[EncodedExample]:
     encoders = {
         "tiger": encode_tiger_example,
         "gnpr": encode_gnpr_example,
         "genpoi": encode_genpoi_example,
+        "ghr": encode_ghr_example,
     }
     try:
         encoder = encoders[method]
     except KeyError as error:
         raise TeacherForcingError(f"未知 teacher-forcing 方法：{method}") from error
-    return [
-        encoder(
-            record,
-            tokenizer=tokenizer,
-            template=template,
-            tokens=tokens,
-            cutoff_len=cutoff_len,
+    examples: list[EncodedExample] = []
+    for record in records:
+        kwargs: dict[str, Any] = {}
+        if method == "ghr":
+            kwargs["collision_prefixes"] = ghr_collision_prefixes
+        examples.append(
+            encoder(
+                record,
+                tokenizer=tokenizer,
+                template=template,
+                tokens=tokens,
+                cutoff_len=cutoff_len,
+                **kwargs,
+            )
         )
-        for record in records
-    ]
+    return examples
 
 
 def evaluate_batch(
@@ -394,6 +577,7 @@ def evaluate_batch(
     top1_values = top1.cpu().tolist()
     top10_values = top10.cpu().tolist()
     nll_values = nll.cpu().tolist()
+    predicted_ids = selected.argmax(dim=-1).cpu().tolist()
     for example, (start, stop) in zip(examples, offsets):
         update_teacher_forcing_metrics(
             metrics,
@@ -405,7 +589,29 @@ def evaluate_batch(
             identifier_indices=example.identifier_indices,
             group=example.group,
             context_indices=example.context_indices,
+            conditional_tail_indices=example.conditional_tail_indices,
         )
+        for position_name, predicted_id in zip(
+            example.position_names,
+            predicted_ids[start:stop],
+        ):
+            if position_name not in {"target_close", "eos"}:
+                continue
+            predicted_token = tokenizer.convert_ids_to_tokens(int(predicted_id))
+            if not isinstance(predicted_token, str):
+                predicted_token = f"<TOKEN_ID_{int(predicted_id)}>"
+            position_counts = metrics.setdefault(
+                "structural_top1_predictions",
+                {},
+            ).setdefault(position_name, {"all": {}, "groups": {}})
+            position_counts["all"][predicted_token] = (
+                position_counts["all"].get(predicted_token, 0) + 1
+            )
+            group_counts = position_counts["groups"].setdefault(
+                example.group,
+                {},
+            )
+            group_counts[predicted_token] = group_counts.get(predicted_token, 0) + 1
     del output, selected, input_ids, attention_mask
 
 
@@ -431,28 +637,95 @@ def main() -> int:
         checkpoint = resolve(args.checkpoint)
         tokenizer_path = resolve(args.tokenizer)
         output_dir = resolve(args.output_dir)
+        identifier_dir = (
+            resolve(args.identifier_dir) if args.identifier_dir is not None else None
+        )
+        token_source_file = (
+            resolve(args.token_source_file)
+            if args.token_source_file is not None
+            else None
+        )
+        tiger_c_positive_reference_file = (
+            resolve(args.tiger_c_positive_reference_file)
+            if args.tiger_c_positive_reference_file is not None
+            else None
+        )
+        if args.method == "ghr" and (
+            identifier_dir is None or token_source_file is None
+        ):
+            raise TeacherForcingError(
+                "--method ghr 必须同时提供 --identifier-dir 与 --token-source-file"
+            )
+        if tiger_c_positive_reference_file is not None and args.method != "ghr":
+            raise TeacherForcingError(
+                "--tiger-c-positive-reference-file 当前只适用于 --method ghr"
+            )
         if args.checkpoint_rows <= 0:
             raise TeacherForcingError("--checkpoint-rows 必须为正整数")
         if args.smoke_limit is not None and not 1 <= args.smoke_limit <= 100:
             raise TeacherForcingError("--smoke-limit 必须位于 [1, 100]")
         records = load_records(data_file)
-        expected_rows = args.smoke_limit or 10_000
-        if len(records) < expected_rows or (args.smoke_limit is None and len(records) != 10_000):
+        if len(records) != 10_000:
             raise TeacherForcingError("正式 teacher-forcing 数据必须恰好为 10,000 条")
-        records = records[:expected_rows]
+        selection_metadata: dict[str, Any] | None = None
+        if tiger_c_positive_reference_file is not None:
+            reference_records = load_records(tiger_c_positive_reference_file)
+            records, selection_metadata = select_tiger_c_positive_records(
+                records,
+                reference_records,
+                token_capacities=args.token_capacities,
+            )
+            selection_metadata.update(
+                {
+                    "reference_file": str(tiger_c_positive_reference_file),
+                    "reference_sha256": sha256_file(tiger_c_positive_reference_file),
+                }
+            )
+        if args.smoke_limit is not None:
+            records = records[: args.smoke_limit]
         checkpoint_metadata = validate_checkpoint(checkpoint, args.expected_epoch)
         tokenizer, template = load_lf_tokenizer_and_template(
             tokenizer_path,
             project_root=PROJECT_ROOT,
         )
         if args.method == "tiger":
-            tokens, token_metadata = load_tiger_token_ids(tokenizer_path, tokenizer)
+            tokens, token_metadata = load_tiger_token_ids(
+                tokenizer_path,
+                tokenizer,
+                token_capacities=args.token_capacities,
+                mapping_filename=args.token_mapping_filename,
+            )
         elif args.method == "gnpr":
             tokens, token_metadata = load_gnpr_token_ids(tokenizer_path, tokenizer)
+        elif args.method == "ghr":
+            assert identifier_dir is not None and token_source_file is not None
+            tokens, token_metadata = load_ghr_token_ids(
+                tokenizer_path,
+                tokenizer,
+                identifier_dir=identifier_dir,
+                token_source_path=token_source_file,
+            )
         else:
             tokens, token_metadata = load_pid_token_ids(tokenizer_path)
         if len(tokenizer) != checkpoint_metadata["vocab_size"]:
             raise TeacherForcingError("checkpoint 与 tokenizer 词表大小不一致")
+
+        ghr_collision_prefixes: set[tuple[int, int, int]] | None = None
+        ghr_identifier_metadata: dict[str, Any] | None = None
+        if args.method == "ghr":
+            assert identifier_dir is not None
+            ghr_index, ghr_identifier_metadata = load_ghr_id_index(identifier_dir)
+            prefixes = np.asarray(ghr_index.codes[:, :3], dtype=np.int32)
+            _, inverse, counts = np.unique(
+                prefixes,
+                axis=0,
+                return_inverse=True,
+                return_counts=True,
+            )
+            ghr_collision_prefixes = {
+                tuple(int(value) for value in prefixes[row])
+                for row in np.flatnonzero(counts[inverse] > 1)
+            }
 
         model_hash = (
             None
@@ -469,6 +742,8 @@ def main() -> int:
             "checkpoint_epoch": checkpoint_metadata["epoch"],
             "checkpoint_sha256": model_hash,
             "tokenizer": token_metadata,
+            "ghr_identifier": ghr_identifier_metadata,
+            "sample_selection": selection_metadata,
             "cutoff_len": args.cutoff_len,
             "initial_batch_size": args.batch_size,
             "teacher_forcing": True,
@@ -519,6 +794,7 @@ def main() -> int:
                 template=template,
                 tokens=tokens,
                 cutoff_len=args.cutoff_len,
+                ghr_collision_prefixes=ghr_collision_prefixes,
             )
             started = time.monotonic()
             try:
@@ -553,6 +829,10 @@ def main() -> int:
             "status": "completed",
             "config": config,
             "metrics": finalize_teacher_forcing_metrics(progress["metrics"]),
+            "structural_top1_predictions": progress["metrics"].get(
+                "structural_top1_predictions",
+                {},
+            ),
             "performance": {
                 "inference_seconds": progress["inference_seconds"],
                 "samples_per_second": len(records) / progress["inference_seconds"],
@@ -571,6 +851,7 @@ def main() -> int:
         PidTrieError,
         TigerEvalError,
         GnprEvalError,
+        GhrEvalError,
         OSError,
         KeyError,
         json.JSONDecodeError,

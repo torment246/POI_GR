@@ -48,8 +48,13 @@ class TigerDataTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def write_tiger_mapping(self) -> Path:
-        tiger_id_dir = self.root / "tiger-ids"
+    def write_tiger_mapping(
+        self,
+        *,
+        directory_name: str = "tiger-ids",
+        base_codebook_sizes: tuple[int, int, int] = (1024, 1024, 1024),
+    ) -> Path:
+        tiger_id_dir = self.root / directory_name
         tiger_id_dir.mkdir()
         mapping_path = tiger_id_dir / "poi_tiger_id_mapping.parquet"
         table = pa.table(
@@ -83,7 +88,7 @@ class TigerDataTest(unittest.TestCase):
                     "tiger_ids": {
                         "fixed_length": 4,
                         "token_order": ["S1", "S2", "S3", "C"],
-                        "token_capacities": [1024, 1024, 1024, 2],
+                        "token_capacities": [*base_codebook_sizes, 2],
                     },
                 }
             )
@@ -286,6 +291,48 @@ class TigerDataTest(unittest.TestCase):
         self.assertIn("<S3_1023>", payload["additional_special_tokens"])
         self.assertIn("<C_1>", payload["additional_special_tokens"])
         self.assertNotIn("<C_2>", payload["additional_special_tokens"])
+
+    def test_asymmetric_base_codebooks_are_supported_when_explicit(self) -> None:
+        asymmetric_id_dir = self.write_tiger_mapping(
+            directory_name="asymmetric-tiger-ids",
+            base_codebook_sizes=(64, 128, 256),
+        )
+        orders_dir = self.write_orders(self.valid_records())
+        output_dir = self.root / "asymmetric-output"
+        result = build_tiger_sft_data(
+            orders_dir,
+            asymmetric_id_dir,
+            output_dir,
+            self.split,
+            self.history_window,
+            expected_base_codebook_sizes=(64, 128, 256),
+        )
+        self.assertEqual(
+            result.manifest["tiger_identifier"]["token_capacities"],
+            [64, 128, 256, 2],
+        )
+        special_tokens = json.loads(
+            (output_dir / "special_tokens.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            special_tokens["item_token_capacities"],
+            [64, 128, 256, 2],
+        )
+        self.assertIn("<S3_255>", special_tokens["additional_special_tokens"])
+        self.assertNotIn("<S1_64>", special_tokens["additional_special_tokens"])
+
+    def test_base_codebook_mismatch_is_rejected(self) -> None:
+        output_dir = self.root / "mismatched-codebook-output"
+        with self.assertRaisesRegex(TigerDataError, "码本容量与预期不一致"):
+            build_tiger_sft_data(
+                self.write_orders(self.valid_records()),
+                self.tiger_id_dir,
+                output_dir,
+                self.split,
+                self.history_window,
+                expected_base_codebook_sizes=(512, 1024, 2048),
+            )
+        self.assertFalse(output_dir.exists())
 
     def test_unsorted_history_is_rejected_without_output(self) -> None:
         history = [

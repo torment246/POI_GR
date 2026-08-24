@@ -1,0 +1,94 @@
+schema_version: poi-gr-method-v1
+
+method:
+  id: ghr_sid
+  group: innovation
+  display_name: GHR-SID 地理优先层次关系标识
+  status: implemented
+  summary: 旧版 G6+变长实体关系硬目标已完成并停止；当前候选冻结 TIGER 三层，用末端 latent residual 与多尺度地理拟合全局共享 32×32 固定后缀，并在每个 TIGER 桶内执行唯一最小代价分配。
+  paper: null
+
+task:
+  type: map_search_adapted_sequential_poi_generation
+  target_fields: [query, user_lng, user_lat, poi_id, event_time]
+  history_fields: [query, user_lng, user_lat, poi_id, event_time]
+  max_history_events: 10
+
+identifier:
+  type: tiger_frozen_three_layer_with_global_aligned_two_layer_collision_suffix
+  token_order: [s1, s2, s3, r1, r2]
+  token_capacities: [1024, 1024, 1024, 32, 32]
+  base_sid: TIGER-BGE-M3-1024x3-epoch20
+  city_scope: 北京市
+  city_token: omitted_single_city
+  semantic_prefix_frozen: true
+  suffix_latent_feature: normalized_final_rqvae_residual
+  suffix_geo_feature: local_km_multiscale_sincos
+  suffix_geo_scales_km: [0.5, 1, 2, 4, 8, 16, 32, 64]
+  suffix_geo_weight: 0.5
+  suffix_anchor_fit: weighted_minibatch_kmeans
+  suffix_unique_assignment: minimum_cost_within_tiger_bucket
+  non_collision_suffix: [0, 0]
+  fixed_identifier_length: 5
+  request_dependent_identifier: false
+  query_used_to_build_identifier: false
+
+pipeline:
+  data:
+    status: ready
+    notes: EXP-09/14 与 EXP-20260820-02 均从冻结 TIGER Messages 做逐行 identifier-only remap；新固定五层候选的 Train/Valid/Test 为 7,586,410/597,421/606,682，行序、sample_id、原始 Query、请求 GID、历史长度和元数据全部保持一致。Query/GID 仍是 SFT 输入，但不参与目标 SID 构造。
+    commands:
+      - entrypoint: scripts/ghr_sid/build_aligned_collision_sft_data.py
+        config: null
+        purpose: 为冻结 TIGER 三层加全局共享 32×32 后缀生成同行同序的固定五层 SFT Messages 与特殊 Token 清单。
+      - entrypoint: scripts/ghr_sid/build_sft_data.py
+        config: null
+        purpose: 一次流式扫描冻结 TIGER SFT 数据，同时生成 EXP-09 与 EXP-14 的同划分 Messages、特殊 Token 清单和对齐 manifest。
+  identifier:
+    status: ready
+    notes: EXP-09/14 旧变长候选均已闭环且未超过 TIGER；EXP-20260820-01 新候选冻结 TIGER 三层，以全局共享 R1/R2 替换随机 C，2,337,178 条固定五层 ID 全部唯一，EXP-20260820-02 已完成 SFT 输入准备。
+    commands:
+      - entrypoint: scripts/ghr_sid/build_aligned_collision_sid.py
+        config: configs/sid/ghr_tiger_aligned_collision_32x32.yaml
+        purpose: 构建 TIGER latent residual + 多尺度地理的全局共享 32×32 碰撞后缀，并执行桶内唯一匹配与完整产物复检。
+      - entrypoint: scripts/ghr_sid/evaluate_structure.py
+        config: null
+        purpose: 运行北京全量 Query-free 地理优先碰撞结构实验并保存主 G6→R3→G8 数组及 G5/G7 敏感性指标。
+      - entrypoint: scripts/ghr_sid/audit_residuals.py
+        config: null
+        purpose: 回查 GID8+全关系同签名残留 POI，导出完整名称地址并量化 GID9/GID10、静态语义和重复记录。
+      - entrypoint: scripts/ghr_sid/evaluate_entity_relations.py
+        config: null
+        purpose: 历史 EXP-04—07 对照；复用冻结 G6 和粗 R3，在 post-R3 组内编译数字、类别、道路、父子实体及最小位置字符关系。
+      - entrypoint: scripts/ghr_sid/evaluate_g6_entity_relations.py
+        config: null
+        purpose: EXP-09 历史基线；在 post-G6 桶内直接编译统一实体候选和精确最短区分描述。
+      - entrypoint: scripts/ghr_sid/evaluate_g6_relation_tree.py
+        config: null
+        purpose: 当前结构主入口；在 post-G6 桶内按共享强角色次序编译关系树，只在最终语义叶子追加局部 Dedup。
+      - entrypoint: scripts/ghr_sid/audit_residual_vectors.py
+        config: null
+        purpose: 对 EXP-09 残留逐字节核对原始 BGE-M3 向量，并量化 GID7—GID12 和精确坐标对完全同向量子组的区分贡献。
+      - entrypoint: scripts/ghr_sid/build_identifiers.py
+        config: null
+        purpose: 编译 EXP-09/14 的全目录变长数值 Token 映射，重算叶子 Dedup，并验证 POI ID 与最终 identifier 全局一一对应。
+  train:
+    status: ready
+    notes: EXP-09/14 已完成三轮训练。新固定五层候选已准备 1,341,827/100,286 条 packed Train/Valid，cutoff 1024 下 8,183,831 条源样本无超长且 Assistant 目标截断为 0；训练配置为 Qwen3-0.6B 全参数 BF16、3 epoch、4×RTX PRO 6000D、global batch 512，尚未启动正式训练。
+    commands:
+      - entrypoint: launchers/run_train_ghr_tiger_aligned_collision_32x32_sft_4x6000d_3epoch.sh
+        config: configs/sft/ghr_tiger_aligned_collision_32x32_history10_query_gid_v1.yaml
+        purpose: 在四张 RTX PRO 6000D 上训练冻结 TIGER 三层加全局共享 R1/R2 的固定五层候选。
+      - entrypoint: launchers/run_train_ghr_exp09_sft_4x6000d_3epoch.sh
+        config: configs/sft/ghr_exp09_g6_minimum_entity_dedup_history10_query_gid_v1.yaml
+        purpose: 在四张 RTX PRO 6000D 上训练 EXP-09 唯一 SID 对照。
+      - entrypoint: launchers/run_train_ghr_exp14_sft_4x6000d_3epoch.sh
+        config: configs/sft/ghr_exp14_g6_relation_tree_dedup_history10_query_gid_v1.yaml
+        purpose: 在四张 RTX PRO 6000D 上训练 EXP-14 桶共享关系树候选。
+  evaluate:
+    status: ready
+    notes: GHR identifier 使用与 TIGER 相同的固定 Validation 10k、无约束 Beam=10 主协议；非法候选保留原 Beam 排名并计为 miss，另支持全库紧凑 CSR Trie 合法路径诊断。EXP-09/14 已完成评测；新固定五层候选要等三轮训练后评测 epoch 1/2/3 无约束、epoch 3 约束和 gold-prefix R1/R2 准确率。
+    commands:
+      - entrypoint: scripts/ghr_sid/evaluate_retrieval.py
+        config: null
+        purpose: 对 EXP-09/14 checkpoint 执行固定 10k 无约束主评测或合法路径约束诊断，并校验 Tokenizer、变长 identifier 与目标 POI 映射。

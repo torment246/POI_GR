@@ -146,8 +146,26 @@ def _load_json_object(path: Path, name: str) -> dict[str, Any]:
 
 def load_tiger_id_lookup(
     tiger_id_dir: Path,
+    *,
+    expected_base_codebook_sizes: Sequence[int] = (1024, 1024, 1024),
 ) -> tuple[TigerIdLookup, dict[str, Any], str, str]:
     """Load and verify the formal TIGER item identifier mapping."""
+
+    if (
+        len(expected_base_codebook_sizes) != 3
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            for value in expected_base_codebook_sizes
+        )
+    ):
+        raise TigerDataError(
+            "expected_base_codebook_sizes 必须包含三个正整数"
+        )
+    expected_base_codebook_sizes = tuple(
+        int(value) for value in expected_base_codebook_sizes
+    )
 
     tiger_id_dir = tiger_id_dir.resolve()
     manifest_path = tiger_id_dir / "tiger_id_manifest.json"
@@ -195,8 +213,12 @@ def load_tiger_id_lookup(
     ):
         raise TigerDataError("TIGER identifier token_capacities 无效")
     token_capacities = tuple(int(value) for value in raw_capacities)
-    if token_capacities[:3] != (1024, 1024, 1024):
-        raise TigerDataError("当前 TIGER baseline 要求 1024×3 base SID")
+    if token_capacities[:3] != expected_base_codebook_sizes:
+        raise TigerDataError(
+            "TIGER identifier base SID 码本容量与预期不一致："
+            f"manifest={token_capacities[:3]}，"
+            f"expected={expected_base_codebook_sizes}"
+        )
 
     parquet_file = pq.ParquetFile(mapping_path)
     if parquet_file.metadata.num_rows != poi_count:
@@ -616,6 +638,7 @@ def build_tiger_sft_data(
     max_history_events: int = 10,
     geohash_length: int = 6,
     user_bucket_count: int = 2000,
+    expected_base_codebook_sizes: Sequence[int] = (1024, 1024, 1024),
     max_retained_per_split: int | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> TigerDataResult:
@@ -646,7 +669,10 @@ def build_tiger_sft_data(
         tiger_manifest,
         tiger_mapping_sha256,
         tiger_manifest_sha256,
-    ) = load_tiger_id_lookup(tiger_id_dir)
+    ) = load_tiger_id_lookup(
+        tiger_id_dir,
+        expected_base_codebook_sizes=expected_base_codebook_sizes,
+    )
     special_tokens = build_tiger_special_tokens(
         token_capacities=tiger_lookup.token_capacities,
         user_bucket_count=user_bucket_count,

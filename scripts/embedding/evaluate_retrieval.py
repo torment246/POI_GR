@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         required=True,
-        choices=("qwen3_0.6b", "qwen3_4b", "bge_m3"),
+        choices=("qwen3_0.6b", "qwen3_4b", "bge_m3", "mmbert_recall_128"),
         help="评测模型。",
     )
     parser.add_argument(
@@ -243,17 +243,25 @@ def _validate_manifest(
         raise EvaluationError("manifest shape 与 embeddings.npy 不一致")
     job_config = load_job_config(poi_config_path, PROJECT_ROOT)
     manifest_model = manifest.get("model", {})
+    try:
+        expected_model_path = str(job_config.model.path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        expected_model_path = str(job_config.model.path)
     expected_model = {
-        "path": str(job_config.model.path.relative_to(PROJECT_ROOT)),
+        "path": expected_model_path,
         "padding_side": job_config.model.padding_side,
         "normalize_embeddings": job_config.model.normalize_embeddings,
         "torch_dtype": job_config.model.torch_dtype,
         "attention": job_config.model.attention,
+        "backend": job_config.model.backend,
     }
     for key, value in expected_model.items():
-        if manifest_model.get(key) != value:
+        actual = manifest_model.get(key)
+        if key == "backend" and actual is None:
+            actual = "sentence_transformers"
+        if actual != value:
             raise EvaluationError(
-                f"manifest model.{key}={manifest_model.get(key)!r} != {value!r}"
+                f"manifest model.{key}={actual!r} != {value!r}"
             )
 
 
@@ -515,6 +523,9 @@ def _instruction_text(
 
 
 def _pooling_description(encoder: Any) -> str:
+    explicit = getattr(encoder, "pooling_description", None)
+    if isinstance(explicit, str) and explicit:
+        return explicit
     pooling_modes = (
         ("pooling_mode_cls_token", "cls"),
         ("pooling_mode_mean_tokens", "mean"),

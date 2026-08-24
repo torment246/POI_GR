@@ -604,21 +604,36 @@ def load_lf_tokenizer_and_template(
     try:
         from llamafactory.data import get_template_and_fix_tokenizer
         from llamafactory.hparams import DataArguments, ModelArguments
-        from llamafactory.model import load_tokenizer
+        from llamafactory.model.patcher import patch_tokenizer
+        from transformers.models.qwen2.tokenization_qwen2_fast import (
+            Qwen2TokenizerFast,
+        )
     except ImportError as error:
         raise GenerativeEvalError("无法导入本地 LLaMA-Factory") from error
 
+    tokenizer_config_path = tokenizer_path / "tokenizer_config.json"
+    try:
+        tokenizer_config = json.loads(tokenizer_config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise GenerativeEvalError("Tokenizer config JSON 读取失败") from error
+    if tokenizer_config.get("tokenizer_class") != "Qwen2Tokenizer":
+        raise GenerativeEvalError("本评测入口只接受已冻结的 Qwen2 fast tokenizer")
     model_args = ModelArguments(
         model_name_or_path=str(tokenizer_path.resolve()),
         use_fast_tokenizer=True,
         trust_remote_code=False,
     )
-    module = load_tokenizer(model_args)
-    tokenizer = module["tokenizer"]
+    tokenizer = Qwen2TokenizerFast.from_pretrained(
+        tokenizer_path,
+        local_files_only=True,
+        split_special_tokens=model_args.split_special_tokens,
+        padding_side="right",
+    )
+    patch_tokenizer(tokenizer, model_args)
     data_args = DataArguments(
         template="qwen3_nothink",
         train_on_prompt=False,
-        cutoff_len=128,
+        cutoff_len=1024,
     )
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
     tokenizer.padding_side = "left"
@@ -658,6 +673,10 @@ def encode_prompt_like_training(
     )
     if target_len != len(formatted_target_ids):
         raise GenerativeEvalError("cutoff_len 会截断 Assistant Final PID")
+    if cutoff_len >= 1024 and source_len != len(source_ids):
+        raise GenerativeEvalError(
+            "1024 Token 新协议禁止截断 Source；请先只删除最早历史事件"
+        )
     target_pid_ids = tokenizer.encode(target_content, add_special_tokens=False)
     return source_ids[:source_len], target_pid_ids
 
@@ -1953,14 +1972,19 @@ def load_generation_model(checkpoint: Path, *, expected_vocab_size: int) -> Any:
     """Load one full-finetuned checkpoint on a single CUDA device."""
 
     import torch
-    from transformers import AutoModelForCausalLM
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
 
     if not torch.cuda.is_available():
         raise GenerativeEvalError("完整生成评测需要 CUDA GPU，当前环境不可用")
-    model = AutoModelForCausalLM.from_pretrained(
+    try:
+        config = json.loads((checkpoint / "config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise GenerativeEvalError("Checkpoint config JSON 读取失败") from error
+    if config.get("architectures") != ["Qwen3ForCausalLM"]:
+        raise GenerativeEvalError("本评测入口只接受 Qwen3ForCausalLM checkpoint")
+    model = Qwen3ForCausalLM.from_pretrained(
         checkpoint,
         local_files_only=True,
-        trust_remote_code=False,
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
     )
@@ -1996,7 +2020,7 @@ def run_full_evaluation(
     top_k: int,
     initial_batch_size: int,
     chunk_size: int,
-    cutoff_len: int = 128,
+    cutoff_len: int = 1024,
     smoke_limit: int | None = None,
     dataset_context: Mapping[str, Any] | None = None,
     ssp_predictions_dir: Path | None = None,

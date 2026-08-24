@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         default=128,
     )
     parser.add_argument("--chunk-size", type=int, default=10_000)
-    parser.add_argument("--cutoff-len", type=int, default=128)
+    parser.add_argument("--cutoff-len", type=int, default=1024)
     parser.add_argument(
         "--validation-subset-size",
         type=int,

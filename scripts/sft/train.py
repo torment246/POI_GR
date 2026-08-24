@@ -22,7 +22,12 @@ def set_args(argv=None):
     parser.add_argument("--gradient_accumulation_steps", type=int, default=8, help="梯度累积步数")
     parser.add_argument("--nproc_per_node", type=int, default=1, help="当前节点使用的 GPU 数")
     parser.add_argument("--expected_global_batch_size", type=int, default=512, help="预期全局 Batch Size")
-    parser.add_argument("--cutoff_len", type=int, default=128, help="最大序列长度")
+    parser.add_argument(
+        "--cutoff_len",
+        type=int,
+        default=1024,
+        help="整条 Source+Target 的最大长度，后续实验默认 1024",
+    )
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="学习率")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight Decay")
     parser.add_argument("--lr_scheduler_type", type=str, default="cosine", help="学习率调度器")
@@ -54,7 +59,12 @@ def set_args(argv=None):
     parser.add_argument("--dataloader_num_workers", type=int, default=4, help="DataLoader 进程数")
     parser.add_argument("--preprocessing_num_workers", type=int, default=16, help="预处理进程数")
     parser.add_argument("--include_tokens_per_second", type=int, choices=[0, 1], default=1, help="统计 Tokens/s")
-    parser.add_argument("--master_port", type=int, default=29500, help="单节点多卡通信端口")
+    parser.add_argument(
+        "--master_port",
+        type=int,
+        default=29500,
+        help="单节点多卡通信端口；设为 0 时由 LLaMA-Factory 自动选择空闲端口",
+    )
     parser.add_argument("--resume", type=int, choices=[0, 1], default=0, help="是否恢复训练")
     parser.add_argument("--resume_path", type=str, default="", help="恢复用 Checkpoint 路径")
     parser.add_argument(
@@ -72,11 +82,35 @@ def resolve_path(project_root, raw_path):
     return (path if path.is_absolute() else project_root / path).resolve()
 
 
+def validate_tokenized_cache_cutoff(tokenized_path, cutoff_len):
+    """Require the cache cutoff to match the training configuration exactly."""
+
+    manifest_path = Path(tokenized_path) / "cache_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Tokenized Cache 缺少 Manifest：{manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Tokenized Cache Manifest 不是合法 JSON：{manifest_path}") from error
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, dict):
+        raise ValueError(f"Tokenized Cache Manifest 缺少 inputs：{manifest_path}")
+    cache_cutoff = inputs.get("cutoff_len")
+    if cache_cutoff != cutoff_len:
+        raise ValueError(
+            "训练 cutoff_len 与 Tokenized Cache 不一致："
+            f"{cutoff_len} != {cache_cutoff}（{manifest_path}）"
+        )
+    return manifest_path
+
+
 def validate_args(args, project_root):
     if args.nproc_per_node <= 0:
         raise ValueError("nproc_per_node 必须大于 0")
     if args.batch_size <= 0 or args.gradient_accumulation_steps <= 0:
         raise ValueError("batch_size 和 gradient_accumulation_steps 必须大于 0")
+    if args.cutoff_len not in (128, 256, 512, 1024):
+        raise ValueError("cutoff_len 只允许 128、256、512 或 1024")
     if args.save_strategy == "steps" and args.save_steps <= 0:
         raise ValueError("save_strategy=steps 时 save_steps 必须大于 0")
     if args.eval_strategy == "steps" and args.eval_steps <= 0:
@@ -99,8 +133,8 @@ def validate_args(args, project_root):
         raise ValueError("本任务只允许 report_to=tensorboard")
     if args.resume and not args.resume_path:
         raise ValueError("resume=1 时必须传入 resume_path")
-    if not 1 <= args.master_port <= 65535:
-        raise ValueError("master_port 必须位于 1～65535")
+    if not 0 <= args.master_port <= 65535:
+        raise ValueError("master_port 必须位于 0～65535；0 表示自动选择空闲端口")
 
     model_path = resolve_path(project_root, args.model_name_or_path)
     dataset_dir = resolve_path(project_root, args.dataset_dir)
@@ -116,6 +150,9 @@ def validate_args(args, project_root):
     missing = [f"{name}={path}" for name, path in required_paths.items() if not path.exists()]
     if missing:
         raise FileNotFoundError("缺少正式训练输入：" + "；".join(missing))
+    cache_manifest_path = validate_tokenized_cache_cutoff(
+        tokenized_path, args.cutoff_len
+    )
 
     resume_path = None
     if args.resume:
@@ -141,6 +178,7 @@ def validate_args(args, project_root):
         "model_path": model_path,
         "dataset_dir": dataset_dir,
         "tokenized_path": tokenized_path,
+        "cache_manifest_path": cache_manifest_path,
         "llamafactory_path": llamafactory_path,
         "resume_path": resume_path,
     }
@@ -275,6 +313,7 @@ def save_resolved_config(args, config, resolved):
         "nproc_per_node": args.nproc_per_node,
         "global_batch_size": resolved["global_batch_size"],
         "master_port": args.master_port,
+        "master_port_mode": "auto" if args.master_port == 0 else "fixed",
         "training_config": config,
     }
     path = output_dir / "resolved_config.json"
@@ -285,19 +324,28 @@ def save_resolved_config(args, config, resolved):
     return path
 
 
+def configure_distributed_environment(args):
+    """Configure one-node distributed launch without retaining a stale port."""
+
+    os.environ["NPROC_PER_NODE"] = str(args.nproc_per_node)
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    if args.master_port == 0:
+        os.environ.pop("MASTER_PORT", None)
+    else:
+        os.environ["MASTER_PORT"] = str(args.master_port)
+    os.environ["PYTHONUNBUFFERED"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    if args.nproc_per_node > 1:
+        os.environ["FORCE_TORCHRUN"] = "1"
+
+
 def launch_training(args):
     project_root = Path(__file__).resolve().parents[2]
     resolved = validate_args(args, project_root)
     config = build_training_config(args, resolved)
     resolved_config_path = save_resolved_config(args, config, resolved)
 
-    os.environ["NPROC_PER_NODE"] = str(args.nproc_per_node)
-    os.environ["MASTER_ADDR"] = "127.0.0.1"
-    os.environ["MASTER_PORT"] = str(args.master_port)
-    os.environ["PYTHONUNBUFFERED"] = "1"
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    if args.nproc_per_node > 1:
-        os.environ["FORCE_TORCHRUN"] = "1"
+    configure_distributed_environment(args)
 
     with tempfile.NamedTemporaryFile(
         mode="w",
