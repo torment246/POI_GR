@@ -1,0 +1,95 @@
+schema_version: qg-prqk-sid-visualization-config-v1
+protocol_id: sid_visualization_a0_a4_nogid_full_v1
+scope: READ_ONLY_COMPARE_A0_A4_GID_A4_NOGID
+
+rows:
+  poi: 716245
+  embedding_dim: 1024
+  levels: 3
+  codebook_size: 512
+
+frozen_manifests:
+  active_embedding:
+    path: qg_prqk/outputs/inputs/beijing_poi_active_bge_m3_v1/manifest.json
+    sha256: 9baded48ef927795779743dedee459c46906f8fa1e711048777a19af99750862
+  p5_a0:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/manifest.json
+    sha256: ec84eb8fa2c1c65059caab1de94d43095d82048c25310564e6950ab0a244789e
+  p6_a4_s1_s2:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/manifest.json
+    sha256: 326e00d62e132bffdcbaa05ac21a839b886fda5c9d00608c4ebfcb9486bb1624
+  p7_a4_gid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_geo_prqk_s3_hard60_topk5_v1/full_291590q_716245p/manifest.json
+    sha256: dd395ab0d11321106455ad05b18503af9b7d3dda7cb7fd85e531655cece2133c
+  p7_a4_nogid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_geo_nogid_prqk_s3_s1s2_parent_hard60_topk5_v1/full_291590q_716245p/manifest.json
+    sha256: a6ce4ba8c20f79073e5a41fa2e516b26b2bdeb7c2d7c56e260f4a94f46bf1d6c
+  p8_a4_gid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_static_evaluation_a0_vs_a4_v1/full_342879q_716245p/manifest.json
+    sha256: c66ea6c5fac499ed7c377b9f2ae7d73c3fde333c7842f0d79e9c84b141c82ab3
+  p8_a4_nogid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p/manifest.json
+    sha256: b22ab413558b1e147542135fd554fdf0b7a71082bdd1842fc787aa2b16ed4ed8
+
+poi_embedding_path: qg_prqk/outputs/inputs/beijing_poi_active_bge_m3_v1/embeddings.npy
+poi_metadata_path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_geo_nogid_prqk_s3_s1s2_parent_hard60_topk5_v1/full_291590q_716245p/poi_nogid_metadata.parquet
+
+methods:
+  A0_POI_ONLY:
+    display_name: A0 POI-only PRQK
+    sid_path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_assignments_s1_s2_s3.npy
+    codebook_paths:
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_codebook_s1.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_codebook_s2.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_codebook_s3.npy
+    residual_input_paths:
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_residual_s0.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_residual_after_s1.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/poi_residual_after_s2.npy
+  A4_GID_PARENT:
+    display_name: A4 GID-parent
+    sid_path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_static_evaluation_a0_vs_a4_v1/full_342879q_716245p/poi_assignments_s1_s2_s3.npy
+    codebook_paths:
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_static_evaluation_a0_vs_a4_v1/full_342879q_716245p/poi_codebook_s1.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_static_evaluation_a0_vs_a4_v1/full_342879q_716245p/poi_codebook_s2.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_static_evaluation_a0_vs_a4_v1/full_342879q_716245p/poi_codebook_s3.npy
+    residual_input_paths: &a4_residual_inputs
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/poi_residual_s0.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/poi_residual_after_s1.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/poi_residual_after_s2.npy
+  A4_NOGID_S1S2_PARENT:
+    display_name: A4 NoGID S1/S2-parent
+    sid_path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p/poi_sid_s1_s2_s3.npy
+    codebook_paths:
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p/poi_codebook_s1.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p/poi_codebook_s2.npy
+      - qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p/poi_codebook_s3.npy
+    residual_input_paths: *a4_residual_inputs
+
+sampling:
+  seed: 42
+  prefix_pairs_per_level: 20000
+  representative_codes_per_level: 5
+  rows_per_representative_code: 100
+  semantic_examples_per_prefix: 3
+  top_prefixes_per_level: 3
+
+projection:
+  method: pca50_then_tsne
+  cpu_threads: 8
+  pca_components: 50
+  tsne_perplexity: 30.0
+  tsne_max_iter: 1000
+  tsne_learning_rate: auto
+  tsne_metric: euclidean
+
+figures:
+  dpi: 180
+  format: png
+  code_distribution: sid_code_distribution.png
+  residual_semantic_map: sid_residual_semantic_map.png
+  prefix_semantics: sid_prefix_semantics.png
+
+output_dir: qg_prqk/outputs/figures/qg_prqk_sid_a0_a4_nogid_full_v1
+overwrite: false
+downstream_started: false

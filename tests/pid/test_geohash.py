@@ -29,6 +29,16 @@ from poi_gr.sid.evaluation import compute_basic_metrics
 
 
 class GeohashPidTest(unittest.TestCase):
+    def test_active_512_requires_explicit_matching_capacity(self) -> None:
+        manifest_path, poi_path = self.write_fixture()
+        manifest = json.loads(manifest_path.read_text())
+        manifest["codebook_sizes"] = [512, 512, 512]
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaises(GeohashPidError):
+            build_geohash_pid(manifest_path, poi_path, self.root / "wrong")
+        result = build_geohash_pid(manifest_path, poi_path, self.root / "active", sid_codebook_size=512)
+        self.assertEqual(result.manifest["pid_codes"]["codebook_sizes"], [32] * 6 + [512] * 3)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

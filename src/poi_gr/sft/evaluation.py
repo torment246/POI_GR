@@ -696,7 +696,9 @@ def target_pid_is_confined_to_causal_history(
         return False
     history_open, remainder = user_content.split("<HISTORY>", maxsplit=1)
     history_content, current_content = remainder.split("</HISTORY>", maxsplit=1)
-    if history_open.strip() or target_content in current_content:
+    header = history_open.strip()
+    if ((header and re.fullmatch(r"<USER_ID><U_\d{4}></USER_ID>", header) is None)
+            or target_content in current_content):
         return False
     pid_fields = re.findall(r"<POI_PID>(.*?)</POI_PID>", history_content)
     if not any(target_content in value for value in pid_fields):
@@ -2124,8 +2126,8 @@ def run_full_evaluation(
 
     trie = CompactPidTrie.load(trie_dir, mmap=True)
     token_ids, _ = load_pid_token_ids(tokenizer_path)
-    if trie.leaf_count != 2_337_178:
-        raise GenerativeEvalError("全量 Final PID Trie 叶子数必须为 2,337,178")
+    if trie.leaf_count != trie_manifest.get("input", {}).get("poi_count"):
+        raise GenerativeEvalError("Final PID Trie 叶子数与冻结目录 POI 数不一致")
     poi_ids = load_aligned_poi_ids(mapping_path, trie.leaf_count)
     tokenizer, template = load_lf_tokenizer_and_template(
         tokenizer_path,

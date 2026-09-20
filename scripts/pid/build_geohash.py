@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         "--sid-manifest",
         type=Path,
         required=True,
-        help="三层 1024 码本、epoch 20 的 sid_manifest.json。",
+        help="三层码本、epoch 20 的 sid_manifest.json。",
     )
     parser.add_argument(
         "--geohash-length",
@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
             "metrics 和 RQ-VAE resolved_config 解析。"
         ),
     )
+    parser.add_argument("--sid-codebook-size", type=int, choices=(512, 1024), default=1024,
+                        help="每层 SID 容量；旧全库默认 1024，active 对照可指定 512。")
     return parser.parse_args()
 
 
@@ -87,6 +89,7 @@ def main() -> int:
             output_dir,
             geohash_length=args.geohash_length,
             order=args.order,
+            sid_codebook_size=args.sid_codebook_size,
             progress=lambda message: print(message, file=sys.stderr, flush=True),
         )
     except (GeohashPidError, OSError) as error:

@@ -19,6 +19,7 @@ from transformers import AutoTokenizer
 
 TRIE_SCHEMA_VERSION = "final-pid-trie-v1"
 GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
+PID_ORDERS = ("gid_sid", "sid_gid")
 TRIE_FILENAMES = (
     "child_offsets.npy",
     "child_token_ids.npy",
@@ -214,9 +215,16 @@ def load_pid_token_ids(
     if "<D_-1>" in token_mapping:
         raise PidTrieError("Token 表不得包含 <D_-1>")
 
+    sid_sizes = []
+    for level in (1, 2, 3):
+        codes = {token for token in token_mapping if token.startswith(f"<S{level}_")}
+        size = len(codes)
+        if size not in (512, 1024) or codes != {f"<S{level}_{i}>" for i in range(size)}:
+            raise PidTrieError(f"S{level} 必须包含完整连续的 512 或 1024 个 SID Token")
+        sid_sizes.append(size)
     required_pid_tokens = {
         *(f"<G_{char}>" for char in GEOHASH_ALPHABET),
-        *(f"<S{level}_{code}>" for level in (1, 2, 3) for code in range(1024)),
+        *(f"<S{level}_{code}>" for level, size in enumerate(sid_sizes, 1) for code in range(size)),
         *(f"<D_{code}>" for code in range(512)),
     }
     missing = required_pid_tokens.difference(token_mapping)
@@ -245,7 +253,7 @@ def load_pid_token_ids(
     )
     sid = tuple(
         np.asarray(
-            [token_id(f"<S{level}_{code}>") for code in range(1024)],
+            [token_id(f"<S{level}_{code}>") for code in range(sid_sizes[level - 1])],
             dtype=np.int32,
         )
         for level in (1, 2, 3)
@@ -257,7 +265,7 @@ def load_pid_token_ids(
     if tokenizer.eos_token_id is None:
         raise PidTrieError("Tokenizer 缺少 eos_token_id")
     all_pid_ids = np.concatenate((gid, *sid, dedup))
-    if np.unique(all_pid_ids).size != 3616:
+    if np.unique(all_pid_ids).size != all_pid_ids.size:
         raise PidTrieError("GID、SID、Dedup Token ID 必须互不重复")
     for name, values in (
         ("GID", gid),
@@ -291,18 +299,30 @@ def load_pid_token_ids(
     )
 
 
+def _base_code_columns(pid_order: str) -> tuple[int, ...]:
+    if pid_order == "gid_sid":
+        return tuple(range(9))
+    if pid_order == "sid_gid":
+        return (6, 7, 8, 0, 1, 2, 3, 4, 5)
+    raise PidTrieError(f"不支持的 PID 顺序：{pid_order}")
+
+
 def _depth_tokens(
     codes: np.ndarray,
     sorted_rows: np.ndarray,
     depth: int,
     token_ids: PidTokenIds,
+    *,
+    pid_order: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if depth < 6:
+    base_columns = _base_code_columns(pid_order)
+    if depth < 9:
         positions = np.arange(sorted_rows.size, dtype=np.int64)
-        tokens = token_ids.gid[codes[sorted_rows, depth]]
-    elif depth < 9:
-        positions = np.arange(sorted_rows.size, dtype=np.int64)
-        tokens = token_ids.sid[depth - 6][codes[sorted_rows, depth]]
+        column = base_columns[depth]
+        if column < 6:
+            tokens = token_ids.gid[codes[sorted_rows, column]]
+        else:
+            tokens = token_ids.sid[column - 6][codes[sorted_rows, column]]
     elif depth == 9:
         positions = np.arange(sorted_rows.size, dtype=np.int64)
         dedup = codes[sorted_rows, 9]
@@ -321,6 +341,7 @@ def build_compact_trie_arrays(
     final_pid_codes: np.ndarray,
     token_ids: PidTokenIds,
     *,
+    pid_order: str = "gid_sid",
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Build breadth-first CSR Trie arrays without Python objects per node."""
@@ -338,8 +359,10 @@ def build_compact_trie_arrays(
     if np.any(codes[:, 9] < -1):
         raise PidTrieError("Dedup Code 仅允许 -1 或非负整数")
 
-    progress("正在对 Final PID 做稳定字典序排序……")
-    sort_keys = tuple(codes[:, column] for column in range(9, -1, -1))
+    base_columns = _base_code_columns(pid_order)
+    progress(f"正在按 {pid_order} 对 Final PID 做稳定字典序排序……")
+    logical_columns = (*base_columns, 9)
+    sort_keys = tuple(codes[:, column] for column in reversed(logical_columns))
     sorted_rows = np.lexsort(sort_keys)
     row_nodes = np.zeros(codes.shape[0], dtype=np.int32)
     next_node_id = 1
@@ -350,7 +373,13 @@ def build_compact_trie_arrays(
     terminal_row_parts: list[np.ndarray] = []
 
     for depth in range(11):
-        positions, tokens = _depth_tokens(codes, sorted_rows, depth, token_ids)
+        positions, tokens = _depth_tokens(
+            codes,
+            sorted_rows,
+            depth,
+            token_ids,
+            pid_order=pid_order,
+        )
         parents = row_nodes[positions]
         if tokens.size == 0:
             raise PidTrieError(f"Trie 第 {depth + 1} 层没有有效路径")
@@ -633,6 +662,7 @@ def build_pid_trie(
     tokenizer_path: Path,
     output_dir: Path,
     *,
+    pid_order: str = "gid_sid",
     verify_hashes: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> TrieBuildResult:
@@ -649,6 +679,7 @@ def build_pid_trie(
     arrays = build_compact_trie_arrays(
         final_pid.codes,
         token_ids,
+        pid_order=pid_order,
         progress=progress,
     )
 
@@ -693,8 +724,17 @@ def build_pid_trie(
         },
         "tokenizer": tokenizer_metadata,
         "path_definition": {
-            "singleton": "G1..G6,S1..S3,EOS",
-            "dedup": "G1..G6,S1..S3,D,EOS",
+            "pid_order": pid_order,
+            "singleton": (
+                "G1..G6,S1..S3,EOS"
+                if pid_order == "gid_sid"
+                else "S1..S3,G1..G6,EOS"
+            ),
+            "dedup": (
+                "G1..G6,S1..S3,D,EOS"
+                if pid_order == "gid_sid"
+                else "S1..S3,G1..G6,D,EOS"
+            ),
             "singleton_sentinel": -1,
             "singleton_sentinel_is_token": False,
             "root_token_ids": root_token_ids,

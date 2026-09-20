@@ -1,0 +1,31 @@
+schema_version: qg-prqk-p3a-full-config-v1
+base_p3a_config: qg_prqk_p3a_active_1024x3_v1.yaml
+base_p3a_config_sha256: c7b5197a6128e2b41e0e18e010e2c6fa8fba9c784bc39271eca67650db8707a4
+gate_p3a_config: qg_prqk_p3a_1024x3_v1.yaml
+gate_p3a_config_sha256: f89cc3d38ed1c2f9f068db0b53244d20102bda7093f86056fb25d1ff4b839ebd
+gate_manifest_sha256: 12a29f1ff90d16f619231da18b99916da0afc7a2dfa4d138a18b9bb4bac96c2f
+
+p3a_full:
+  output_dir_name: query_adapter_exact_full
+  d3_rows: 291590
+  gate_exclusion_rows: 50000
+  internal_holdout_rows: 20000
+  holdout_seed: 42
+  holdout_selection: blake2b_query_id_smallest_after_gate_exclusion
+  max_epochs: 3
+  checkpoint_selection:
+    - recall_at_10
+    - recall_at_1
+    - difficult_recall_at_10
+  exact_metrics:
+    - recall_at_1
+    - recall_at_5
+    - recall_at_10
+    - recall_at_20
+    - mrr_at_10
+    - difficult_recall_at_10
+    - query_embedding_cosine_drift
+  query_view_policy:
+    D1: raw_bge
+    D2: raw_bge
+    D3: final_adapter

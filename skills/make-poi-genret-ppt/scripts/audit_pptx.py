@@ -13,11 +13,11 @@ from zipfile import ZipFile
 
 from lxml import etree
 from pptx import Presentation
-from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE, PP_PLACEHOLDER
 
 
 ALLOWED_FONTS = {"微软雅黑", "Microsoft YaHei"}
-ALLOWED_TEXT_COLORS = {"111827", "1A3A6B", "64748B", "FFFFFF"}
+ALLOWED_TEXT_COLORS = {"000000", "111827", "1A3A6B", "64748B", "FFFFFF"}
 SUSPICIOUS_GLYPHS = set("□■▪▫▣☐☑✅❌◆◇●○▲▼▶◀")
 BOX_SHAPES = {
     MSO_AUTO_SHAPE_TYPE.RECTANGLE,
@@ -51,7 +51,8 @@ def _canonical_slide_hashes(prs: Presentation) -> list[str]:
     return hashes
 
 
-def _inspect(path: Path, require_notes: bool) -> tuple[dict[str, object], list[str]]:
+def _inspect(path: Path, require_notes: bool, *,
+             enforce_black_titles: bool = True) -> tuple[dict[str, object], list[str]]:
     issues: list[str] = []
     with ZipFile(path) as archive:
         corrupt_member = archive.testzip()
@@ -65,6 +66,7 @@ def _inspect(path: Path, require_notes: bool) -> tuple[dict[str, object], list[s
     dark_outlined_boxes: list[dict[str, object]] = []
     empty_notes: list[int] = []
     shape_counts: list[int] = []
+    nonblack_titles: list[dict[str, object]] = []
 
     if (prs.slide_width, prs.slide_height) != (EXPECTED_WIDTH, EXPECTED_HEIGHT):
         issues.append(
@@ -107,6 +109,14 @@ def _inspect(path: Path, require_notes: bool) -> tuple[dict[str, object], list[s
                 pass
             if not getattr(shape, "has_text_frame", False):
                 continue
+            runs = [r for p in shape.text_frame.paragraphs for r in p.runs if r.text.strip()]
+            is_major_title = (
+                shape.is_placeholder
+                and shape.placeholder_format.type in (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+            ) or any(r.font.size is not None and r.font.size.pt >= 28 for r in runs)
+            if enforce_black_titles and is_major_title and any(_rgb(r.font) != "000000" for r in runs):
+                nonblack_titles.append({"slide": slide_number, "text": shape.text,
+                                        "colors": [_rgb(r.font) for r in runs]})
             for paragraph in shape.text_frame.paragraphs:
                 for run in paragraph.runs:
                     if run.font.name:
@@ -134,6 +144,8 @@ def _inspect(path: Path, require_notes: bool) -> tuple[dict[str, object], list[s
         issues.append(f"发现 {len(dark_outlined_boxes)} 个深色描边矩形")
     if empty_notes:
         issues.append(f"以下页面备注为空：{empty_notes}")
+    if nonblack_titles:
+        issues.append(f"发现 {len(nonblack_titles)} 个未显式设为黑色的大标题")
 
     report: dict[str, object] = {
         "path": str(path.resolve()),
@@ -148,6 +160,7 @@ def _inspect(path: Path, require_notes: bool) -> tuple[dict[str, object], list[s
         "suspicious_glyphs": suspicious,
         "dark_outlined_boxes": dark_outlined_boxes,
         "empty_notes": empty_notes,
+        "nonblack_titles": nonblack_titles,
     }
     return report, issues
 
@@ -173,10 +186,11 @@ def main() -> int:
         print(f"文件不存在：{args.pptx}", file=sys.stderr)
         return 2
 
-    report, issues = _inspect(args.pptx, args.require_notes)
+    # Notes-only edits must not restyle an older deck to satisfy newer rules.
+    report, issues = _inspect(args.pptx, args.require_notes, enforce_black_titles=not args.baseline)
 
     if args.reference:
-        reference, reference_issues = _inspect(args.reference, False)
+        reference, reference_issues = _inspect(args.reference, False, enforce_black_titles=False)
         if report["slide_size"] != reference["slide_size"]:
             issues.append("页面尺寸与参考 PPTX 不一致")
         report["reference"] = {
@@ -186,7 +200,7 @@ def main() -> int:
         }
 
     if args.baseline:
-        baseline, baseline_issues = _inspect(args.baseline, False)
+        baseline, baseline_issues = _inspect(args.baseline, False, enforce_black_titles=False)
         if baseline_issues:
             issues.append(f"基线 PPTX 本身存在问题：{baseline_issues}")
         if report["slides"] != baseline["slides"]:

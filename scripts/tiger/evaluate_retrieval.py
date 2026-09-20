@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import time
+from array import array
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -20,6 +21,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from poi_gr.sft.evaluation import (  # noqa: E402
+    FixedValidationSubset,
     build_reference_aligned_validation_subset,
     load_generation_model,
     load_lf_tokenizer_and_template,
@@ -55,8 +57,25 @@ def parse_args() -> argparse.Namespace:
             "仅用于诊断的冻结语料库合法路径约束。"
         )
     )
-    parser.add_argument("--valid-file", type=Path, required=True)
-    parser.add_argument("--reference-validation-subset", type=Path, required=True)
+    parser.add_argument(
+        "--valid-file",
+        "--data-file",
+        dest="data_file",
+        type=Path,
+        required=True,
+        help="待评测的 SFT valid.jsonl 或 test.jsonl。",
+    )
+    parser.add_argument("--split", choices=("valid", "test"), default="valid")
+    parser.add_argument(
+        "--reference-validation-subset",
+        type=Path,
+        help="固定 10k Validation 业务主键参考集；与 --full-split 互斥。",
+    )
+    parser.add_argument(
+        "--full-split",
+        action="store_true",
+        help="评测 manifest 声明的完整 split，不采样且不复制源 JSONL。",
+    )
     parser.add_argument("--checkpoints", type=Path, nargs="+", required=True)
     parser.add_argument(
         "--expected-checkpoint-steps", type=int, nargs="+", required=True
@@ -200,20 +219,112 @@ def validate_checkpoints(
     return results
 
 
+def parse_record_line(raw_line: bytes | str, *, line_number: int) -> dict[str, Any]:
+    """Parse one JSONL record with a stable source-line error."""
+
+    try:
+        value = json.loads(raw_line)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise TigerEvalError(f"评测数据第 {line_number} 行 JSON 非法") from error
+    if not isinstance(value, dict):
+        raise TigerEvalError(f"评测数据第 {line_number} 行不是 object")
+    return value
+
+
 def load_records(path: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("rb") as handle:
         for line_number, line in enumerate(handle, start=1):
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError as error:
-                raise TigerEvalError(
-                    f"评测子集第 {line_number} 行 JSON 非法"
-                ) from error
-            if not isinstance(value, dict):
-                raise TigerEvalError(f"评测子集第 {line_number} 行不是 object")
-            records.append(value)
+            records.append(parse_record_line(line, line_number=line_number))
     return records
+
+
+class JsonlRecordSequence(Sequence[Mapping[str, Any]]):
+    """Random-access JSONL view that keeps only byte offsets in memory."""
+
+    def __init__(self, path: Path, *, expected_rows: int) -> None:
+        self.path = path.resolve()
+        self.offsets = array("Q")
+        with self.path.open("rb") as handle:
+            while True:
+                offset = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                self.offsets.append(offset)
+        if len(self.offsets) != expected_rows:
+            raise TigerEvalError(
+                f"评测数据实际行数 {len(self.offsets):,} != manifest {expected_rows:,}"
+            )
+
+    def __len__(self) -> int:
+        return len(self.offsets)
+
+    def __getitem__(
+        self, key: int | slice
+    ) -> Mapping[str, Any] | list[Mapping[str, Any]]:
+        if isinstance(key, slice):
+            start, stop, step = key.indices(len(self))
+            if step != 1:
+                return [self[index] for index in range(start, stop, step)]
+            if start >= stop:
+                return []
+            rows: list[Mapping[str, Any]] = []
+            with self.path.open("rb") as handle:
+                handle.seek(self.offsets[start])
+                for index in range(start, stop):
+                    line = handle.readline()
+                    if not line:
+                        raise TigerEvalError(
+                            f"评测数据在第 {index + 1} 行前意外结束"
+                        )
+                    rows.append(parse_record_line(line, line_number=index + 1))
+            return rows
+
+        index = int(key)
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        with self.path.open("rb") as handle:
+            handle.seek(self.offsets[index])
+            line = handle.readline()
+        return parse_record_line(line, line_number=index + 1)
+
+
+def build_full_split_view(
+    data_file: Path,
+    *,
+    split: str,
+    source_rows: int,
+    source_sha256: str,
+) -> FixedValidationSubset:
+    """Describe a manifest-validated full split without copying its JSONL."""
+
+    data_file = data_file.resolve()
+    date = "2026-07-13" if split == "valid" else "2026-07-14"
+    manifest = {
+        "schema_version": "full-sft-split-view-v1",
+        "status": "completed",
+        "split": split,
+        "date": date,
+        "source_file": str(data_file),
+        "source_rows": source_rows,
+        "source_sha256": source_sha256,
+        "subset_size": source_rows,
+        "selection_method": "all_source_rows",
+        "output_file": str(data_file),
+        "output_rows": source_rows,
+        "output_sha256": source_sha256,
+        "copy_materialized": False,
+    }
+    return FixedValidationSubset(
+        data_path=data_file,
+        manifest_path=data_file.parent / "manifest.json",
+        row_count=source_rows,
+        sha256=source_sha256,
+        manifest=manifest,
+    )
 
 
 def atomic_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -427,6 +538,7 @@ def evaluate_chunk(
     tokens: TigerTokenIds,
     index: TigerIdIndex,
     checkpoint_name: str,
+    split: str,
     batch_size: int,
     cutoff_len: int,
     num_beams: int,
@@ -450,6 +562,7 @@ def evaluate_chunk(
             tokenizer=tokenizer,
             template=template,
             cutoff_len=cutoff_len,
+            split=split,
             token_capacities=index.token_capacities,
         )
         for record in records
@@ -669,6 +782,7 @@ def evaluate_checkpoint(
     *,
     metadata: Mapping[str, Any],
     records: Sequence[Mapping[str, Any]],
+    split: str,
     subset_path: Path,
     subset_sha256: str,
     tokenizer: Any,
@@ -704,7 +818,7 @@ def evaluate_checkpoint(
         "candidate_trace_schema": (
             "tiger-candidate-trace-v3" if bucket_diagnostics else None
         ),
-        "split": "valid",
+        "split": split,
         "data_file": str(subset_path),
         "data_sha256": subset_sha256,
         "rows": target_rows,
@@ -727,7 +841,7 @@ def evaluate_checkpoint(
             PROJECT_ROOT / "src" / "poi_gr" / "methods" / "tiger" / "eval.py"
         ),
     }
-    run_name = f"valid_{checkpoint.name}_beam{num_beams}"
+    run_name = f"{split}_{checkpoint.name}_beam{num_beams}"
     if legal_path_constraint:
         run_name += "_legalpath"
     if bucket_diagnostics:
@@ -790,6 +904,7 @@ def evaluate_checkpoint(
                     tokens=tokens,
                     index=index,
                     checkpoint_name=checkpoint.name,
+                    split=split,
                     batch_size=batch_size,
                     cutoff_len=cutoff_len,
                     num_beams=num_beams,
@@ -910,13 +1025,17 @@ def main() -> int:
                 "--final-checkpoint-only 需要 1 个 checkpoint；默认正式对比需要 3 个"
             )
         if args.num_beams != 10:
-            raise TigerEvalError("固定一万条 checkpoint 对比的 Beam 必须为 10")
+            raise TigerEvalError("冻结 TIGER 评测协议的 Beam 必须为 10")
         if args.chunk_size <= 0:
             raise TigerEvalError("--chunk-size 必须为正整数")
         if args.smoke_limit is not None and not 1 <= args.smoke_limit <= 100:
             raise TigerEvalError("--smoke-limit 必须位于 [1, 100]")
-        valid_file = resolve(args.valid_file)
-        reference = resolve(args.reference_validation_subset)
+        data_file = resolve(args.data_file)
+        reference = (
+            resolve(args.reference_validation_subset)
+            if args.reference_validation_subset is not None
+            else None
+        )
         checkpoints = [resolve(path) for path in args.checkpoints]
         tokenizer_path = resolve(args.tokenizer)
         identifier_dir = resolve(args.identifier_dir)
@@ -924,20 +1043,42 @@ def main() -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         _, source_rows, source_hash = validate_split_manifest(
-            valid_file,
-            split="valid",
+            data_file,
+            split=args.split,
             verify_hash=not args.skip_data_hash,
         )
-        subset = build_reference_aligned_validation_subset(
-            valid_file,
-            reference,
-            output_dir,
-            source_rows=source_rows,
-            source_sha256=source_hash,
-        )
-        if subset.row_count != 10_000:
-            raise TigerEvalError("固定 Validation 子集必须为 10,000 条")
-        records = load_records(subset.data_path)
+        if args.full_split:
+            if reference is not None:
+                raise TigerEvalError(
+                    "--full-split 与 --reference-validation-subset 不能同时使用"
+                )
+            subset = build_full_split_view(
+                data_file,
+                split=args.split,
+                source_rows=source_rows,
+                source_sha256=source_hash,
+            )
+            records: Sequence[Mapping[str, Any]] = JsonlRecordSequence(
+                subset.data_path,
+                expected_rows=source_rows,
+            )
+        else:
+            if args.split != "valid":
+                raise TigerEvalError("非全量模式当前只支持固定 Validation 10k")
+            if reference is None:
+                raise TigerEvalError(
+                    "固定 Validation 10k 缺少 --reference-validation-subset"
+                )
+            subset = build_reference_aligned_validation_subset(
+                data_file,
+                reference,
+                output_dir,
+                source_rows=source_rows,
+                source_sha256=source_hash,
+            )
+            if subset.row_count != 10_000:
+                raise TigerEvalError("固定 Validation 子集必须为 10,000 条")
+            records = load_records(subset.data_path)
         tokenizer, template = load_lf_tokenizer_and_template(
             tokenizer_path,
             project_root=PROJECT_ROOT,
@@ -964,6 +1105,7 @@ def main() -> int:
                 tokenizer=tokenizer,
                 template=template,
                 cutoff_len=args.cutoff_len,
+                split=args.split,
                 token_capacities=index.token_capacities,
             )
             row = index.lookup(example.target_codes)
@@ -1002,6 +1144,7 @@ def main() -> int:
             evaluate_checkpoint(
                 metadata=item,
                 records=records,
+                split=args.split,
                 subset_path=subset.data_path,
                 subset_sha256=subset.sha256,
                 tokenizer=tokenizer,
@@ -1040,7 +1183,7 @@ def main() -> int:
             ),
         )
         payload = {
-            "schema_version": "tiger-valid-checkpoint-results-v1",
+            "schema_version": f"tiger-{args.split}-checkpoint-results-v1",
             "status": "completed",
             "evaluation_protocol": {
                 "decoding": (
@@ -1064,9 +1207,14 @@ def main() -> int:
             "results": results,
             "best_checkpoint": Path(best["config"]["checkpoint"]).name,
         }
-        atomic_json(output_dir / "valid_checkpoint_results.json", payload)
-        write_results_csv(output_dir / "valid_checkpoint_results.csv", results)
-        with (output_dir / "validation_error_cases.jsonl").open(
+        atomic_json(output_dir / f"{args.split}_checkpoint_results.json", payload)
+        write_results_csv(output_dir / f"{args.split}_checkpoint_results.csv", results)
+        error_filename = (
+            "validation_error_cases.jsonl"
+            if args.split == "valid"
+            else "test_error_cases.jsonl"
+        )
+        with (output_dir / error_filename).open(
             "w", encoding="utf-8"
         ) as handle:
             progress = load_json(

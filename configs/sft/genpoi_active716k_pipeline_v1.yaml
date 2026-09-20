@@ -1,0 +1,79 @@
+schema_version: genpoi-active-platform-sft-v1
+training_config: configs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1.yaml
+source_dir: data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1
+pid_dir: outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6-Dedup
+base_model_dir: models/Qwen3-0.6B
+run_control_dir: outputs/run_control/genpoi_active716k_platform_sft
+tmp_dir: outputs/tmp/gpa4
+rows:
+  poi: 716245
+  train: 7586410
+  valid: 597421
+  test: 606682
+sources:
+  data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1/manifest.json: 80d39eb00269baffe0b5c72aa9ecbcaf6d832b3f52e18329390adceabaf088a1
+  outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6-Dedup/final_pid_manifest.json: 7ebc88d607a43d948ec66d480e1783c4d64cade233867cbf5efae7186cd605d6
+  outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/tiger_ids/epoch_20/tiger_id_manifest.json: 43833a58f2e0ac579f2c589d0da6fa562e4105b1f52896d8644f07f565fa06b8
+stages:
+- name: messages
+  args:
+  - scripts/genpoi/build_aligned_sft_data.py
+  - --source-dir
+  - data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1
+  - --tiger-id-dir
+  - outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/tiger_ids/epoch_20
+  - --pid-dir
+  - outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6-Dedup
+  - --output-dir
+  - data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1
+  - --sid-codebook-size
+  - '512'
+  output_dir: data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1
+- name: vocab
+  args:
+  - scripts/pid/prepare_vocab.py
+  - --model-dir
+  - models/Qwen3-0.6B
+  - --tokens
+  - data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/special_tokens.json
+  - --output-dir
+  - models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1
+  - --expected-token-count
+  - '4094'
+  - --mapping-filename
+  - poi_token_mapping.json
+  - --schema-version
+  - genpoi-vocab-v1
+  output_dir: models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1
+- name: cache
+  args:
+  - scripts/sft/validate_tokenization.py
+  - --model-dir
+  - models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1
+  - --train-file
+  - data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/train.jsonl
+  - --valid-file
+  - data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/valid.jsonl
+  - --output-dir
+  - data/sft/tokenized/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1
+  - --dataset-dir
+  - configs/sft
+  - --cutoff-len
+  - '1024'
+  - --batch-size
+  - '4096'
+  - --workers
+  - '16'
+  - --preprocessing-batch-size
+  - '1000'
+  - --train-dataset
+  - genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_train
+  - --valid-dataset
+  - genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_valid
+  - --mapping-filename
+  - poi_token_mapping.json
+  - --smoke-train-rows
+  - '10000'
+  - --smoke-valid-rows
+  - '2000'
+  output_dir: data/sft/tokenized/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1

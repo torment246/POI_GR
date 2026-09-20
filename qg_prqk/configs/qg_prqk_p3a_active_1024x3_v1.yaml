@@ -1,0 +1,50 @@
+schema_version: qg-prqk-p3a-config-v1
+base_v2_1_config: qg_prqk_v2_1_category_active_1024x3.yaml
+p2_5_manifest_sha256: 5f203b94d567433f89ff25a7755516b211544b9be2c484ac28e2243ccd7ce55f
+
+p3a:
+  seed: 42
+  gate_query_limit: 50000
+  sample_query_limit: 1000
+  selection: blake2b_query_id_smallest
+  query_embedding:
+    model_path: models/bge-m3
+    backend: sentence_transformers
+    device: cuda
+    batch_size: 256
+    encode_buffer_size: 8192
+    max_seq_length: 128
+    torch_dtype: bfloat16
+    attention: sdpa
+    padding_side: right
+    normalize_embeddings: true
+    prompt_name: null
+    output_dtype: float16
+  ann:
+    backend: faiss_gpu_flat_ip
+    gpu_id: 0
+    top_k: 100
+    add_batch_size: 32768
+    search_batch_size: 1024
+    use_float16_storage: false
+  adapter:
+    bottleneck: 64
+    residual_scale: 1.0
+    dropout: 0.05
+    optimizer: adamw
+    learning_rate: 1.0e-3
+    weight_decay: 1.0e-4
+    epochs: 3
+    batch_size: 2048
+    precision: bf16
+    max_grad_norm: 1.0
+    temperature: 0.05
+    dev_fraction: 0.05
+    semantic_ann_negatives: 6
+    lexical_metadata_negatives: 4
+    local_geo_negatives: 6
+  evaluation:
+    head_min_query_count: 5
+    tail_max_query_count: 4
+    difficult_definition: raw_recall_at_1_miss
+    primary_metric: recall_at_10_or_mean_hard_margin

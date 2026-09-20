@@ -236,6 +236,7 @@ def prepare_content_geo_metadata(
     output_dir: Path,
     expected_rows: int | None = None,
     max_rows: int | None = None,
+    allow_feature_superset: bool = False,
 ) -> dict[str, Any]:
     """Align compact category and region indices to the existing BGE row order."""
 
@@ -281,7 +282,7 @@ def prepare_content_geo_metadata(
         feature_dir / "poi_features.parquet", format="parquet"
     ).to_table(columns=["poi_id", "category_index", "region_index"])
     feature_rows = feature_table.num_rows
-    if feature_rows != source_rows:
+    if feature_rows != source_rows and not allow_feature_superset:
         raise GnprContentGeoError(
             f"静态特征行数与 BGE 行数不一致：{feature_rows} != {source_rows}"
         )
@@ -345,7 +346,7 @@ def prepare_content_geo_metadata(
         "schema_version": SCHEMA_VERSION,
         "status": "completed",
         "method": "GNPR-SID content-geo map-search adaptation",
-        "catalog_filter": None,
+        "catalog_filter": "embedding_poi_ids" if allow_feature_superset else None,
         "row_order": "BGE-M3 poi_ids.jsonl order",
         "feature_blocks": ["bge_m3_text", "category_code", "plus_code6"],
         "excluded_feature_blocks": ["visit_time", "visitor_identity"],
@@ -362,6 +363,7 @@ def prepare_content_geo_metadata(
         "inputs": {
             "embedding_dir": str(embedding_dir),
             "embedding_signature": embedding_manifest.get("signature"),
+            "embedding_poi_ids_sha256": _sha256(embedding_ids_path),
             "feature_dir": str(feature_dir),
         },
         "outputs": {

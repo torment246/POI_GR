@@ -1,0 +1,63 @@
+schema_version: qg-prqk-p6-p7-direct-full-config-v2
+protocol_id: hard60_topk5_direct_full_v2
+scope: P6-CAT_P7-CAT
+
+# 保留 canonical-v1 及其 sample/medium 合同；本配置只记录用户确认的 sample→full 覆盖。
+base_downstream_config: qg_prqk_v2_1_category_active_512x3.yaml
+base_downstream_config_sha256: a34b5cfd531d84fae14aa719d6546ff23da577830d48665a9529e74f46bd2ac5
+base_downstream_signature: b4bc8a786841faf3dcedff375f4e7390efbafec54df14f27a2c3b540e4ed42c2
+
+output_subdirs:
+  p6: poi_query_category_prqk_s1_s2_hard60_topk5_v1
+  p7: poi_query_category_geo_prqk_s3_hard60_topk5_v1
+
+# sample 只承担代码、数据和产物闭环检查；正式判断与后续调参只看 full。
+p6_gates:
+  selection: sample_graph_closure_then_full_identity_skip_medium
+  seed: 42
+  sample:
+    base_poi_rows: 10000
+    query_rows: 1000
+    expected_closed_poi_rows: 11459
+    expected_s1_s2_edge_rows: 2610
+  full:
+    base_poi_rows: 716245
+    query_rows: 342879
+    expected_closed_poi_rows: 716245
+    expected_s1_s2_edge_rows: 912980
+
+# 除运行规模和 Gate 顺序外，算法严格沿用已跑通的 canonical sample。
+prqk:
+  metric: cosine
+  init: kmeans++
+  seed: 42
+  remove_global_direction: true
+  residual: projection
+  min_iter: 8
+  max_iter: 60
+  objective_rel_tol: 1.0e-4
+  poi_assignment_change_tol: 1.0e-3
+  query_assignment_change_tol: 2.0e-3
+  patience: 2
+  topk_refinement:
+    enabled: true
+    topk: 5
+    beta: 15
+    max_iter: 5
+
+frozen_inputs:
+  p4_full_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/query_graph/full_342879/manifest.json
+    sha256: f6f5a6b4a6f5ef78ff8eb1007e8b566a17fe5a911aae215185b0ed156ab6329d
+  p5_full_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/manifest.json
+    sha256: ec84eb8fa2c1c65059caab1de94d43095d82048c25310564e6950ab0a244789e
+  p6_sample_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/sample_001000q_011459p/manifest.json
+    sha256: 10f40347f60e38289cb9b0405787433e176c0ab051b718773d9e3e2ab36a612a
+
+authorization:
+  id: USER_CONFIRMED_20260909_P6_DIRECT_FULL_AFTER_SMOKE
+  change: p6_gate_sequence.sample_to_full_skip_medium
+  unchanged: algorithm_weights_warmup_topk_residual_capacity_and_stopping_thresholds
+  sample_protocol_id: USER_CONFIRMED_20260909_P6_GRAPH_CLOSED_SAMPLE_MEDIUM

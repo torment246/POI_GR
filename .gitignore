@@ -1,7 +1,8 @@
 # Internal data, models and generated artifacts
-data/
+/data/
 models/
 outputs/
+/qg_prqk/outputs/
 checkpoints/
 runs/
 logs/
@@ -45,6 +46,8 @@ venv/
 # Local training-platform launchers
 /run_*.sh
 /launchers/
+/qg_prqk/launchers/
+/beamrisk_sft/run_*.sh
 
 # Local research references and exploratory business analysis
 /papers/

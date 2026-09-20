@@ -234,6 +234,7 @@ def evaluate_chunk(
     cutoff_len: int,
     num_beams: int,
     existing_error_count: int,
+    split: str = "valid",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], float, int]:
     import torch
 
@@ -243,6 +244,8 @@ def evaluate_chunk(
             tokenizer=tokenizer,
             template=template,
             cutoff_len=cutoff_len,
+            split=split,
+            dedup_capacity=index.dedup_capacity,
         )
         for record in records
     ]
@@ -367,9 +370,12 @@ def evaluate_checkpoint(
     chunk_size: int,
     cutoff_len: int,
     smoke_limit: int | None,
+    split: str = "valid",
 ) -> dict[str, Any]:
     import torch
 
+    if split not in ("valid", "test"):
+        raise GnprEvalError("评测 split 只允许 valid 或 test")
     checkpoint = Path(metadata["path"])
     target_rows = smoke_limit or len(records)
     config = {
@@ -377,7 +383,7 @@ def evaluate_checkpoint(
         "paper_decoding": "direct_generation_without_constrained_decoding",
         "comparison_decoding": "unconstrained_beam_search_then_frozen_id_lookup",
         "invalid_ids_keep_original_rank": True,
-        "split": "valid",
+        "split": split,
         "data_file": str(subset_path),
         "data_sha256": subset_sha256,
         "rows": target_rows,
@@ -400,7 +406,7 @@ def evaluate_checkpoint(
             PROJECT_ROOT / "src" / "poi_gr" / "methods" / "gnpr" / "eval.py"
         ),
     }
-    run_name = f"valid_{checkpoint.name}_beam{num_beams}"
+    run_name = f"{split}_{checkpoint.name}_beam{num_beams}"
     if smoke_limit is not None:
         run_name += f"_smoke{smoke_limit}"
     else:
@@ -453,6 +459,7 @@ def evaluate_checkpoint(
                     cutoff_len=cutoff_len,
                     num_beams=num_beams,
                     existing_error_count=len(progress["error_cases"]),
+                    split=split,
                 )
                 break
             except RuntimeError as error:
@@ -576,6 +583,8 @@ def main() -> int:
         )
         tokens, token_metadata = load_gnpr_token_ids(tokenizer_path, tokenizer)
         index, index_metadata = load_gnpr_id_index(identifier_dir)
+        if len(tokens.dedup) != index.dedup_capacity:
+            raise GnprEvalError("Tokenizer 与 identifier 的 Dedup 容量不一致")
         metadata = validate_checkpoints(
             checkpoints,
             expected_steps=args.expected_checkpoint_steps,
@@ -590,6 +599,7 @@ def main() -> int:
                 tokenizer=tokenizer,
                 template=template,
                 cutoff_len=args.cutoff_len,
+                dedup_capacity=index.dedup_capacity,
             )
             row = index.lookup(example.target_codes)
             if row < 0 or index.poi_id(row) != example.target_poi_id:

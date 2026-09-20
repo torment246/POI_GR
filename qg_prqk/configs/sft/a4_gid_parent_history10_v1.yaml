@@ -1,0 +1,62 @@
+variant: a4_gid_parent
+nproc_per_node: 4
+
+model_name_or_path: qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1
+trust_remote_code: false
+resize_vocab: false
+
+stage: sft
+do_train: true
+do_eval: true
+finetuning_type: full
+
+dataset: qg_prqk_a4_gid_parent_history10_v1_train
+eval_dataset: qg_prqk_a4_gid_parent_history10_v1_valid
+dataset_dir: qg_prqk/configs/sft
+tokenized_path: qg_prqk/outputs/sft_tokenized/a4_gid_parent_history10_v1
+template: qwen3_nothink
+enable_thinking: false
+cutoff_len: 1024
+packing: true
+train_on_prompt: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+output_dir: qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3
+overwrite_output_dir: false
+logging_strategy: steps
+logging_steps: 20
+logging_first_step: true
+logging_dir: qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/tensorboard
+save_strategy: epoch
+save_total_limit: 3
+save_only_model: false
+save_safetensors: true
+plot_loss: true
+report_to: tensorboard
+
+num_train_epochs: 3.0
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
+gradient_accumulation_steps: 16
+learning_rate: 5.0e-5
+optim: adamw_torch
+weight_decay: 0.01
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+bf16: true
+fp16: false
+seed: 42
+data_seed: 42
+gradient_checkpointing: false
+disable_gradient_checkpointing: true
+include_tokens_per_second: true
+include_num_input_tokens_seen: true
+skip_memory_metrics: false
+
+eval_strategy: epoch
+load_best_model_at_end: false
+predict_with_generate: false
+compute_accuracy: false
+ddp_timeout: 7200

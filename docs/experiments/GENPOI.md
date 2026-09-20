@@ -7,9 +7,82 @@
 - GeoPE32 三容量对比选择 `1024×3 / epoch 20`，全量 SID 唯一率 73.1125%；Geohash6 + Dedup 后 2,337,178 条 PID 全局唯一。
 - 历史序列数据、3,626 个原子 Token、正式 packed Cache和四卡 RTX PRO 6000D 三轮训练均已完成。
 - 固定 10,000 条 Validation 的 TCG+SSP、Beam=10 评测已完成旧版和 Centered 两组 epoch 1/2/3 checkpoint；Centered epoch 3 的 HR@1/HR@10/NDCG@10 为 51.98%/87.83%/70.7430%，为当前 GenPOI 最优。
+- 2026-09-15：最新 Centered 修正版的 active 716k、512×3 SID 和 Geohash6/Dedup 唯一 PID 已完成；SID Distinct / POI 为 75.1829%，加 GID6 后为 89.3937%，最终 716,245 条 PID 全部唯一。四卡平台 SFT 已于 2026-09-17 完成，epoch 3 为 `checkpoint-8868`、Validation Loss 0.239886；固定 10k 与四类泛化已完成：HR@1/HR@10/NDCG@10 分别为 50.48%/86.43%/69.2555% 和宏平均 22.9575%/51.3100%/36.3345%；PID 合法率均为 100%。见 `EXP-20260917-01`。
 - 三轮生成结构和 PID 合法率均为 100%；结果仅代表固定 Validation 子集，尚未运行完整 Validation 或 Test。
 
 ## 实验记录
+
+## EXP-20260917-01：Active GenPOI epoch 3 固定与泛化 Validation 评测
+
+- 状态：2026-09-17 五集全部 completed，每集 10,000 条；run_id `20260917_132156_859` 的 prepare、五集、summarize 及 launcher 退出码全部为 0。
+- 目标与假设：在 active 716,245 条目录上检验 GenPOI 完整方法的召回和泛化表现；观察 SSP 地理前缀与 TCG 约束是否在长尾、冷目标上带来更高 Top-K 覆盖，但本次不单独归因 SSP、TCG 或 SID。
+- 数据与配置：沿用 `EXP-20260916-03` 的 active GenPOI JSONL，Validation 源 SHA256 为 `4f479c5d60e4bf34d2841f48be5a85b1b2083b14248fa6d4b93ed623e9d64be0`。冻结参考集仍为原固定 10k 与四类泛化 10k，按 `order_id + searchid` 对齐且目标 POI 一致；没有重新抽样或运行 Test。原始配置为 `configs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1.yaml`。
+- 代码与环境：用户未提交工作树；评测器 SHA256 `01431131707ca420fb7830c21b6c0c58a5f78933ae2ac09687a27cb003f8ff9f`。平台四卡 RTX PRO 6000D、poi-gr、BF16，每卡独立处理一个泛化集，随后 GPU 0 处理固定集。
+- 实际命令：`bash launchers/run_evaluate_genpoi_active716k_epoch3_4x6000d.sh`。复用 `scripts/genpoi/evaluate_active_suite.py` → `evaluate_active_retrieval.py` → 既有 SSP 预测与共享 TCG 评测器。固定 epoch 3 `checkpoint-8868`，模型 SHA256 `9b783358b0d1ee3640c04417bb9c9008bf8af62c4d7344ca3c6b64a0561f12b2`；Beam/Top-K=10、batch 32、chunk 1000、cutoff 1024。
+- 地理与解码：所有单元均为 `constraint_mode=tcg_ssp`、gamma=2，冻结 Query-only SSP head SHA256 `231b923f90affa4e408721e6ed460a7d853def619f4acdaa37fa212194640997`。使用 active GID-first Trie，manifest SHA256 `34ec4f7354c84305168c8142861cf8c2abfa79645453ede61ff81226b631276a`；五集所有候选 PID 均合法，每条均返回 10 个候选且无重复。
+
+| Validation 集合 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | PID 合法率 |
+|---|---:|---:|---:|---:|---:|---:|
+| 固定随机 10k | 50.4800% | 74.6700% | 81.2600% | 86.4300% | 69.2555% | 100.0000% |
+| 已见 Query / 未见配对 | 18.6100% | 39.7300% | 50.4300% | 61.2000% | 38.7738% | 100.0000% |
+| 未见 Query / 已见目标 | 46.6700% | 63.4500% | 68.8500% | 74.6300% | 60.6939% | 100.0000% |
+| 长尾目标（Train 1—5） | 19.3200% | 32.3400% | 39.1200% | 48.3300% | 32.6243% | 100.0000% |
+| 冷目标（Train 0） | 7.2300% | 12.1500% | 15.7600% | 21.0800% | 13.2462% | 100.0000% |
+| 四类泛化宏平均 | 22.9575% | 36.9175% | 43.5400% | 51.3100% | 36.3345% | 100.0000% |
+
+- active 对比：相对 active TIGER-BGE 原无约束口径，固定 HR@1/HR@10/NDCG@10 高 0.70/1.92/1.2059pp，四类宏平均高 2.8325/9.0450/5.6356pp。长尾与冷目标 HR@10 分别高 11.75/11.60pp。相对 TIGER-BGE 固定集合法路径约束，三项仍高 0.69/1.35/0.9922pp。
+- 相对 active TIGER-MMBERT，四类宏平均 HR@1/HR@10/NDCG@10 高 0.7575/6.8275/3.3173pp；但 GenPOI 的长尾 Top-1 19.32% 低于 MMBERT 20.14%，冷目标 Top-1 7.23% 与 NDCG@10 13.2462% 也低于 MMBERT 的 8.66%/13.9358%，不能称为所有切片、所有指标均最好。
+- 历史 GenPOI 对比：相对旧 233 万目录 Centered GenPOI，active 固定 HR@1/HR@10/NDCG@10 低 1.50/1.40/1.4875pp；四类宏平均低 2.2950/2.8275/2.7139pp。旧版部分泛化单元使用 cutoff 512，且目录、码本容量和 SFT 同时变化，因此仅作历史背景，不能把差值单独归因缩库。
+- 产物与核验：`outputs/eval/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/` 下保存五集原始结果及 `suite_summary.json/csv`；JSON SHA256 `b3b14c126209eb13c67229f205b6a31e88b23ad811a7d2893e159cf65add120b`。日志、PID、退出码位于 `outputs/run_control/genpoi_active716k_epoch3_eval/`。重新执行只读汇总校验，与保存结果完全一致；复核五集输入、SSP/Trie manifest 哈希及完成状态。
+- 结论与下一步：GenPOI 在当前 active 四方法对比的固定主指标与四类泛化宏平均上领先，优势主要体现在 Top-K 覆盖；各方法保留原解码协议，这是完整方法比较。后续若做归因，建议同 checkpoint 上配对 TCG-only 与 SSP+TCG；本次不启动额外评测。
+
+
+## EXP-20260916-03：Active GenPOI 三轮 SFT 完成与五集评测入口
+
+- 状态：2026-09-16 启动，09-17 完成四卡三轮 SFT；平台 hardware/prepare/train 退出码均为 0，末次 Trainer 状态为 epoch 3、global_step=max_steps=8868。五集评测入口已准备，尚未运行正式评测，不填检索指标。
+- 目标与假设：检验 active 716,245 条目录的 Centered GeoPE32 + 512×3 SID + GID6/[D] 在与 active TIGER/GNPR 配对输入下的检索表现；训练 Loss 只证明 SFT 完成，不能代替召回指标。
+- 数据版本：沿用 `EXP-20260915-01` 的唯一 PID 和 active TIGER 样本，Train/Valid/Test 为 7,586,410/597,421/606,682。Messages 目录为 `data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/`；Train/Valid SHA256 为 `19805ded78dffd14577b2697dde10600f544041f8166842ddc0f3a0202b4c24a` / `4f479c5d60e4bf34d2841f48be5a85b1b2083b14248fa6d4b93ed623e9d64be0`。
+- 缓存与预检：同名 `data/sft/tokenized/` 中 packed Train/Validation 为 1,513,060/112,955；cutoff 1024，全量完整序列最大 987，超长与目标截断均为 0。扩词模型为 `models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/`，Tokenizer 文件集合 SHA256 `af108be887138aebc0f67e0117b828e48f4d2fc9160a60e7caf37b2f8ee7cd7d`。
+- 代码与环境：沿用平台 SFT 配置及用户未提交工作树，启动时没有独立 Git 提交快照；poi-gr，LLaMA-Factory 0.9.4、Transformers 4.52.4，四卡 RTX PRO 6000D。训练配置 `configs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1.yaml`，BF16 全参数、cutoff 1024、每卡 batch 8、累积 16、global batch 512、3 epoch。
+- 实际启动命令：`bash launchers/run_train_genpoi_active716k_centered_512x3_4x6000d_3epoch.sh`；内部复用 `scripts/genpoi/active_sft.py --config configs/sft/genpoi_active716k_pipeline_v1.yaml` 的 prepare/train 阶段。日志与退出码在 `outputs/run_control/genpoi_active716k_platform_sft/`，本次 run_id 为 `20260916_113052_854`。
+- 核心结果：epoch 1/2/3 为 `checkpoint-2956/5912/8868`，Validation Loss 为 **0.337292/0.251696/0.239886**；Train Loss 0.443395，训练耗时 69,586.80 秒（约 19.33 小时）。三份 checkpoint 均保存模型和 Trainer 状态；训练日志终态与退出码一致。
+- 训练产物：`outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/`。epoch 3 作为与 active 对照同轮次的评测对象，尚未据检索指标选优。
+- 下一步命令：`bash launchers/run_evaluate_genpoi_active716k_epoch3_4x6000d.sh`；`--dry-run` 只核验输入并打印命令。该文件从既有 GenPOI 四卡评测平台入口复制，继续被 Git 忽略；可版本化入口为 `scripts/genpoi/evaluate_active_suite.py`。
+- 评测数据流：构建/校验 active 716,245 叶子 GID-first Trie → 四卡分别处理 `seen_query_unseen_pair`、`unseen_query_seen_target`、`long_tail_target`、`cold_target` → GPU 0 处理固定 10k → 五集完整性校验及汇总。全部参考集复用 `outputs/eval/generalization_validation_suite_10k_v1/suite_manifest.json` 中的冻结文件；由既有单集入口按业务键对齐到 active JSONL，逐条核验目标 POI，调用冻结 Query-only SSP（gamma=2）与 TCG，Beam/Top-K=10、batch 32、chunk 1000、cutoff 1024。
+- 本次交付验证：12 项 active SFT/单集评测/五集汇总轻量测试通过；新入口 `--help`、真实输入四卡脚本 `--dry-run`、`bash -n`、可执行权限、compileall 与 `git diff --check` 通过。dry-run 已核验 epoch-3 checkpoint 状态、Cache 的 Tokenizer 文件集合指纹、active PID manifest、SSP head 和五个参考集 SHA256；未执行正式 GPU 评测。
+- 预期评测产物：同名 `outputs/eval/` 下五个子目录各自保存 `valid_checkpoint_results.json`，总表为 `suite_summary.json/csv`，四类泛化宏平均不包含固定流量集。运行日志、PID、退出码在 `outputs/run_control/genpoi_active716k_epoch3_eval/`。正式评测尚未启动，后续需核验五集各 10,000 条且完成后再记录 HR/NDCG。
+
+## EXP-20260915-01：ActivePOI Centered GeoPE32 与配对 SFT 准备
+
+- 状态：SID 与唯一 PID 已完成。GeoPE、20 epoch RQ-VAE、全量 SID、Geohash6 和 Dedup 均成功；`geope_retry.exit=0`、`sid.exit=0`、`export_retry2.exit=0`、`pid.exit=0`、`dedup.exit=0`。SID 和最终 PID 均经过独立核验。平台准备与四卡训练入口已交付，正式配对数据/扩词模型/Cache 留待平台运行，尚无 active GenPOI 下游检索指标。
+- 目标与假设：复用已冻结的最新 Centered 修正版代码，在活跃闭集上重新构建 GeoPE、RQ-VAE 和唯一 PID；与 active TIGER/GNPR 保持相同非标识 SFT 输入及划分，以比较完整方法的检索表现，不从静态唯一率推断下游提升。
+- 数据：`data/beijing_poi_active_order14d_history10_20260715_json/`；复用 active BGE-M3 1024 维向量，716,245 POI 行序 SHA256 为 `8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81`。
+- 方法：沿用 `global_mean_center_l2`、32 地理锚点、方位角分段旋转与 TIGER RQ-VAE 的 256 latent/element_mean 重构，不启用 diversity。均值在 active 目录重算，锚点按旧算法从 active 目录固定抽样 200,000 坐标拟合；SID 采用 active 对照的 `512×3`，全 716,245 行初始化，20 epoch，seed 42。
+- 配置：`configs/sid/rqvae_genpoi_active716k_geope32_centered_512x3.yaml`；SFT 配置为 `configs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1.yaml`，cutoff 1024，全参数 BF16，三轮，四卡全局 batch 512。
+- 数据实现：复用原 GenPOI PID 格式与词表构建器，新增 `scripts/genpoi/build_aligned_sft_data.py`，从 active TIGER 逐行替换历史和目标标识，保留用户哈希、事件结构、Query、请求 GID、业务键和划分。目标为原 GenPOI 裸 PID，历史包装为 `<POI_PID>`；Test 只保留 JSONL。
+- 代码与环境：基线 `54802e6674e283722ecee00fb862530df30cef9a` 与用户既有未提交工作树；poi-gr Python，开发机 RTX A6000 用于 SID，GeoPE 沿用已有 CPU 分块旋转。正式四卡 SFT 入口准备后交给训练平台，当前未启动正式 SFT。
+- GeoPE 命令：`python scripts/genpoi/build_geope_embeddings.py --source-embedding-dir outputs/embeddings/beijing_poi_active_order14d_history10_bge_m3 --poi-data-dir data/beijing_poi_active_order14d_history10_20260715_json --output-dir outputs/embeddings/beijing_poi_active716k_bge_m3_genpoi_geope32_centered --reference-count 32 --reference-fit-sample-size 200000 --embedding-preprocessing global_mean_center_l2 --device cpu`。
+- SID 命令：`python scripts/sid/train_rqvae.py --config configs/sid/rqvae_genpoi_active716k_geope32_centered_512x3.yaml --experiment GenPOI-ACTIVE716K-CenteredGeoPE32-TIGER-RQVAE-512x3-FULLINIT --no-progress`；完整环境覆盖与命令记录在 `outputs/run_control/genpoi_active716k/sid_command.json`。
+- GeoPE 结果：`[716245,1024]` float16，manifest SHA256 `5341706f2fb0ca991ccc3c958f8d59afc19b399b386dbe50dc3bf463869ee3ea`；旋转前后范数平均/最大误差为 `8.5693e-9/1.1921e-7`（float32、前 32,768 行监控样本）。
+- 产物与日志：`outputs/embeddings/beijing_poi_active716k_bge_m3_genpoi_geope32_centered/`、`outputs/sid/genpoi/active716k_bge_m3_geope32_centered_tiger_rqvae/GenPOI-ACTIVE716K-CenteredGeoPE32-TIGER-RQVAE-512x3-FULLINIT/`（下称 run）、`outputs/run_control/genpoi_active716k/`（下称 control）。run 下保存 `checkpoint_epoch_20.pt`、`resolved_config.json`、训练指标及 `evaluations/epoch_20/` 下四项 SID 产物；训练和 SID 评估状态均为 `completed`。
+- 训练结果：单卡 RTX A6000，batch 4096，Train/Validation 为 709,082/7,163，完整训练 368.30 秒，初始化覆盖全部 716,245 行且三层初始码本均使用 512 个码字；20 轮无监控塌缩警告。最终 Validation reconstruction loss 为 0.0006665533、cosine 为 0.5592447。固定 checkpoint SHA256 为 `47608656226e655b34a8d1c0de1a425800dac2fb6ad63038e98fdac09f822d1f`，独立重载确认 epoch 20、配置签名一致且模型张量全 finite。
+- 导出命令：`python scripts/sid/export_rqvae.py --run-dir <run> --checkpoint checkpoint_epoch_20.pt --output-dir <run>/evaluations/epoch_20 --device cuda`；checkpoint 参数相对 run 解析，完整实参在 `control/export_command.json`，归档的 `prepare_commands.json` 已同步修正。成功导出耗时 47.37 秒（不含随后静态评估）。
+- 全量结果：716,245 条三层 SID，538,494 个不同 SID，Distinct / POI 为 **75.1829%**；454,214 条单例 POI（63.4160%），262,031 条碰撞 POI（36.5840%），碰撞桶 84,280 个，冗余编码比例 24.8171%，P99/最大桶为 **6/191**。三层分别使用 **498/512/512** 个码字，利用率 **97.2656%/100%/100%**。Prefix1/2/3 类别 Macro Purity 为 52.3202%/77.0109%/97.1751%，Micro Purity 为 54.9977%/68.6301%/93.6019%，类别覆盖率 100%。
+- 独立核验：SID `[716245,3]` int32，码值范围 0–511；POI 行数/行序哈希、checkpoint 哈希与 manifest 一致。独立 `np.unique` 重算的不同 SID 数、单例与碰撞 POI、P99/最大桶、逐层码字数均与正式指标一致；详情在 `control/sid_independent_validation.json`。SID NPY / manifest SHA256 分别为 `62530d9062dbacbfb9e71f42b28d1295271919d98e7b802f92f73678c03e7db0` / `de53eff08dae9a9f2ba08b97cb17ab94afc76faf951cc12bffaf297c281dc577`。
+- 静态对照：active TIGER 的 Distinct / POI 为 77.0310%、碰撞 POI 33.7781%、最大桶 152；本组 SID 碰撞更多，但 GenPOI 追加 Geohash6 和条件 Dedup，不能由 SID 静态指标判断最终检索优劣。
+- 唯一 PID 结果：`outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6/` 的 base PID Distinct / POI 为 89.3937%，残余碰撞 118,487 条、最大桶 128；同名 `-Dedup/` 中最终 `[716245,10]` int32 全部唯一，597,758 条单例第十列为 -1，118,487 条使用 `D0–D127`，预留 Dedup 容量仍为 512。已独立验证三类码值范围、全量唯一性、前九列与 base PID 逐行一致、最后一列与 Dedup 数组一致及各产物 SHA256。
+- PID 命令：`python scripts/pid/build_geohash.py --sid-manifest <run>/evaluations/epoch_20/sid_manifest.json --poi-data data/beijing_poi_active_order14d_history10_20260715_json --output-dir outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6 --sid-codebook-size 512`，然后 `python scripts/pid/build_dedup.py --pid-manifest outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6/pid_manifest.json --dedup-capacity 512 --output-dir outputs/pid/genpoi/GenPOI-ACTIVE716K-CenteredGeoPE32-512x3-e20-G6-Dedup`；运行环境为 poi-gr CPU，日志见 control 的 `pid.log/exit`、`dedup.log/exit`。
+- Final PID manifest / NPY / mapping SHA256 分别为 `7ebc88d607a43d948ec66d480e1783c4d64cade233867cbf5efae7186cd605d6` / `db3fab332005c2092b806eb1d4833e6875dc9c214c102ff7dd3eaadb3d2874cc` / `f49a2c7aa83329115dc295044dab4b84ead02c75426a6e1a5ae3ac5ac523c9a4`；独立核验见 `control/pid_independent_validation.json`。
+- 2026-09-15 接续：用户要求先完成 SID。已核对并停止旧准备监督器 PID 3916988；GeoPE mmap 输出进程 PID 3898017 在全量均值后长期处于 D 状态，终止后退出码 137。旧临时目录保留，不作为有效产物。输出改为分块顺序写入标准 NPY，8 项 GeoPE 数值/对齐回归测试通过；原算法、dtype 和分块参数保持不变。重试记录在 `geope_retry.log/exit`；本轮只推进 SID 构建，SFT 自动队列暂停。
+- SID 导出恢复：首次实际导出的 mmap 输出也长期处于 D 状态，核对后终止（`export.exit=-9`）。共享导出器仅将 NPY 输出改为顺序写入，编码计算保持不变；训练—保存—恢复—导出及 manifest/metrics 的小样本回归测试通过。第一次修复后重试被残留 `.sid_codes.npy.tmp` 触发目录保护拦截（`export_retry.exit=2`），该中断文件已归档到 control；随后同一 checkpoint 成功导出（`export_retry2.exit=0`），无重训。历史失败退出码保留供追溯，以成功重试及独立核验标记判断本轮终态。
+- 用户已明确确认 `512×3`，与 active TIGER/GNPR 一致。GeoPE/SID 数值计算仍复用既有代码；共享 PID 构建器增加显式 512 容量选项，默认保持 1024；Trie 词表校验支持完整 512/1024 码表；评测目录大小按冻结 manifest 核验，保留 SSP+TCG 方法和既有模型。
+- 平台准备接续：用户明确要求参考 A0，把 SFT 准备放在平台启动脚本里。旧 `prepare_commands.json` 和 `supervisor_source.json` 仅作归档，监督器保持停止；新入口不依赖旧 `prepare.exit`。这项默认交付方式已写入 `skills/poi-genret-workflow/SKILL.md`。
+- 平台入口：`bash launchers/run_train_genpoi_active716k_centered_512x3_4x6000d_3epoch.sh`，参考 `qg_prqk/launchers/run_train_qg_prqk_a0_gid_sft_4gpu_3epoch.sh`，保留平台初始化与认证。执行 `scripts/genpoi/active_sft.py`，配置为 `configs/sft/genpoi_active716k_pipeline_v1.yaml`：单 CPU 主进程生成配对 Train/Valid/Test JSONL → fresh 扩词模型（4,094 个新增 Token）→ 全量 Train/Valid 1024 零截断预检与 packed Cache → 四卡 BF16、3 轮 SFT。四卡每卡 batch 8、累积 16、全局 batch 512；要求各卡至少 36 GiB 可用显存。准备阶段清空 CUDA 可见卡并移除分布式 rank 环境，训练前再检查硬件。
+- 平台门禁与复用：冻结 PID/TIGER/source manifest；验证最终 PID 哈希和唯一性、逐行输入配对、扩词模型、Cache 数据哈希、预检全量行数、超长和目标截断均为 0，再重载 Arrow，核对 packed 行数与首/中/末 1024 长度及监督标签。各阶段使用输入/代码指纹与输出文件状态凭证复用，文件变化即停止；锁定同一任务，拒绝覆盖或隐式续训非空训练目录。日志、分阶段退出码和完成凭证位于 `outputs/run_control/genpoi_active716k_platform_sft/`。
+- 运行方式：`--dry-run` 只核对冻结输入、配置和文件状态，不要求下游数据已存在；`--prepare-only` 在平台完成数据、词表与缓存后退出；无参数则准备通过后直接训练。本入口的目标是 SFT；之后评测复用既有 `scripts/genpoi/evaluate_active_retrieval.py` 的 SSP+TCG，并构建 active Trie。
+- 验证：既有 8 项 GeoPE 与 60 项配对数据/PID/Trie/SSP/评测兼容测试通过。本次真实 15 条配对样本 smoke（每划分 5 条）通过，用户哈希和非标识内容不一致均为 0；新平台流程测试覆盖失败阻断、已完成阶段复用/变更拒绝、缓存重载与零截断、训练退出状态。平台脚本 `bash -n`、可执行权限与真实输入 `--dry-run` 通过。正式 Messages/扩词模型/Cache 和四卡训练等待用户平台运行，不能把 dry-run 或 smoke 视为全量准备完成。
+
+
 ## EXP-20260802-01 GenPOI GeoPE32 三容量 SID 全量对比
 
 ### 目标与假设
@@ -659,3 +732,7 @@ python scripts/sft/evaluate_retrieval.py \
 - 四组宏平均 HR@1/HR@10/NDCG@10 为 25.2525%/54.1375%/39.0484%，比 TIGER 高 0.26/2.7675/1.3535pp。GenPOI 在四组 HR@10/NDCG@10 均为第一；HR@1 只在已见 Query 新配对和冷目标第一，在新 Query 已见目标与长尾目标分别低 TIGER 0.52/0.28pp，符合“改善候选覆盖多于 Top-1 精排”的假设。
 - 真实 Token 审计显示四组超 512 行数为 `0/11/6/7`，最大长度为 `501/644/605/566`。cold-target 已按 1024 完整补跑；另外两组历史 512 结果最多受 0.11/0.06pp 扰动，最坏界仍不足以翻转其与 TIGER 的 HR@1 排序或 Top-K 结论。
 - 正式产物位于 `outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/genpoi_centered_e3/`。本结果支持显式地理结构与约束生成改善泛化 Top-K，但北京同城数据仍不能证明跨城泛化；严格发表表应统一把所有受影响单元重评为 1024。
+
+### 2026-09-18：active 全量 Test 四模型对照验收
+
+GenPOI SSP+TCG 的 HR@1/HR@10/NDCG@10 为 50.7726%/86.7847%/69.5561%，PID 合法率 100%；略低于 QG-HRQ(GID)，高于 NoGID 与 GNPR。 同一 2026-07-14 Test 共 606,682 条、epoch 3、Beam 10、cutoff 1024；正式任务及父脚本退出 0。完整跨方法记录统一见 [EXP-20260917-03](../../qg_prqk/docs/experiments/QG_PRQK.md#exp-20260917-03active-四模型全量-test-评测)。

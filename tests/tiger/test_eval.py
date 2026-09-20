@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,7 +33,11 @@ from poi_gr.methods.tiger.eval import (  # noqa: E402
     update_bucket_metrics,
     update_metrics,
 )
-from scripts.tiger.evaluate_retrieval import validate_candidate_trace_row  # noqa: E402
+from scripts.tiger.evaluate_retrieval import (  # noqa: E402
+    JsonlRecordSequence,
+    build_full_split_view,
+    validate_candidate_trace_row,
+)
 
 
 class TigerEvalTest(unittest.TestCase):
@@ -212,6 +218,43 @@ class TigerEvalTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "不在冻结语料库"):
             constraint.allowed_next((100, 201, 1302, 2404))
+
+    def test_full_split_view_streams_jsonl_without_copying(self) -> None:
+        rows = [
+            {"sample_id": "a", "split": "test"},
+            {"sample_id": "b", "split": "test"},
+            {"sample_id": "c", "split": "test"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            data_file = Path(directory) / "test.jsonl"
+            data_file.write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            records = JsonlRecordSequence(data_file, expected_rows=3)
+            view = build_full_split_view(
+                data_file,
+                split="test",
+                source_rows=3,
+                source_sha256="frozen-hash",
+            )
+
+            self.assertEqual(len(records), 3)
+            self.assertEqual(records[-1]["sample_id"], "c")
+            self.assertEqual(
+                [record["sample_id"] for record in records[1:3]], ["b", "c"]
+            )
+            self.assertEqual(view.data_path, data_file.resolve())
+            self.assertEqual(view.row_count, 3)
+            self.assertFalse(view.manifest["copy_materialized"])
+            self.assertEqual(view.manifest["date"], "2026-07-14")
+
+    def test_full_split_view_rejects_manifest_row_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data_file = Path(directory) / "test.jsonl"
+            data_file.write_text('{"sample_id":"a"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "实际行数 1 != manifest 2"):
+                JsonlRecordSequence(data_file, expected_rows=2)
 
 
 if __name__ == "__main__":

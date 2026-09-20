@@ -254,3 +254,167 @@ bash launchers/run_evaluate_mmbert_ghr_aligned_sft_4x6000d.sh
 - 产物：固定无约束、合法路径和四类泛化结果分别位于 `outputs/eval/tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_gpu4_a100_e3/`、`outputs/eval/legal_path_fixed10k_v1/tiger_mmbert_recall_128_e3/` 和 `outputs/eval/generalization_validation_suite_10k_v1/mmbert_ghr_aligned_sft_epoch3_unconstrained_cutoff1024_v1/<subset>/mmbert_e3/`。两个固定结果 SHA256 为 `5d24e54444766957ee14a0089b507530adfe92cd2c903e8f17fea8cc034004c6`/`3540880db9f4f1f27341cfc166ebb43396a416e4659fc7969cf3e0f837f15946`；共享汇总 SHA256 为 `8c0abd3911998a5b8e6276211a6054ad11da61f463fa948eed7f856ac64f2ca0`；
 - 结论：MMBERT 的冷目标信号值得保留为后续表征训练线索，但当前“MMBERT 向量→冻结 TIGER RQ-VAE→collision token”的完整方法没有通过随机集或泛化宏平均门槛，不再投入相同配置的更多 seed/epoch；
 - 下一步：先对 epoch 3 补固定 10k 的 S1/S2/S3 gold-prefix、三层 Bucket 和条件 `C` 准确率，定位损失是在粗层可预测性还是后缀；若粗层已明显落后，则后续应在向量/SID 联合训练中显式加入层级 Query 可预测性，而不是继续追求静态唯一率。
+
+### EXP-20260826-01：MMBERT epoch 3 逐层、Bucket 与 C 后缀归因诊断
+
+#### 目标、假设与冻结输入
+
+- 日期：2026-08-26；状态：已完成。目标是在不重新训练、不改变 MMBERT identifier 和不引入合法路径约束的前提下，对 `checkpoint-7599` 补齐固定随机 Validation 10k 的 gold-prefix 逐层准确率、无约束 Beam=10 三层 Bucket 覆盖和条件 `C` 准确率，判断 `EXP-20260822-03` 的端到端回落来自前三层 `Query→SID`，还是来自碰撞后缀；
+- 预注册判断沿用本文件既定口径：若 MMBERT 三层唯一 Bucket 仍明显低于 TIGER，则把 MMBERT 保留为 scorer/teacher 候选，不再把其当前 RQ-VAE SID 作为生成器目标；只有 Bucket 强而 `C` 弱时，才优先考虑前缀保持的局部后缀或桶内排序；
+- 评测数据由完整 MMBERT Validation 597,421 条按冻结 TIGER 参考集的 `order_id + searchid` 精确同序选择。参考 SHA256 为 `a2e0366d3d8f582e53a5293b687dc08f85b2960d60c7fb44d2fd02168063a944`，MMBERT 对齐子集 SHA256 为 `033a02071fa90c7196b7eefa2bfb9ae0a6be932ff27de67537f368199984b5d3`，业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`，目标 POI mismatch 为 0；该子集与 `EXP-20260822-03` 的固定 MMBERT 子集逐字节一致；
+- checkpoint 固定为 epoch 3 `checkpoint-7599`，模型 SHA256 为 `e927ebdfc6d385755b87c1015f98cf3e422e7e13dc5b4a4bd58b593612a7d24d`。Tokenizer mapping SHA256 为 `451a0c1c5b0eaf8a5f2a2f773cc4bbd7d532ed659123d3543f444544e35d04d8`；2,337,178 条冻结 identifier 容量为 `[1024,1024,1024,154]`，mapping SHA256 为 `755dd3c914136991432e6adcb0dbb726c48f6a3d08d9485ced3d946c82c3da3e`；
+- 运行对应 Git HEAD `54802e6674e283722ecee00fb862530df30cef9a` 的非干净工作树；正式运行前唯一已有改动是用户保留的 `third_party/LLaMA-Factory` 子模块状态，本实验未修改评测源码。Teacher-Forcing 脚本、TIGER 评测器和方法代码 SHA256 分别为 `52709176849c33febee5fde06d98f38e732801da568d53c285282bde90f881d0`、`6cd1f0d32676c4e9aa3d73bb391c5e3cd66038b179110a0edb57d4be2663299e` 和 `eb42c361ae6573b545c561e545b8e5af90644b05586c08a1af9200fe608ecf8f`。
+
+#### 配置、命令与环境
+
+- Teacher-Forcing 只计算 Assistant 目标位置，所有位置都给定正确 Prompt 和前序目标 Token；`S1/S2/S3` 的逐位置准确率分别表示 gold 前缀下的条件准确率，三级累计值要求前三层同时正确。`C` 条件准确率给定正确 `S1/S2/S3`；其中 `C>0` 组按 MMBERT 自身目标 code 划分，不等于所有目标桶大小大于 1 的请求，也不与 TIGER 的 2,356 条 `C>0` 构成同样本对照；
+- 生成诊断保持论文复现主协议：无约束 Beam=10、返回 10 个候选、非法完整 ID 保留原 rank 并计 miss、无地理裁剪。`raw-slot Bucket` 保留原 Beam 槽位和重复桶；`unique Bucket` 移除不可在冻结目录展开的前三层桶，再按首次出现顺序去重；
+- 环境为 `/ofs/map_search/hudan/envs/poi-gr`、Python 3.10、PyTorch 2.9.1+cu128、单卡 NVIDIA RTX A6000 48GB，短 `TMPDIR=outputs/tmp/mmdiag`。两项正式任务实际 batch 均为 32；Teacher-Forcing 推理 119.15 秒、峰值显存 7,137,369,600 bytes，Beam 生成推理 1,298.12 秒、峰值显存 26,476,898,816 bytes；
+- 正式命令如下：
+
+```bash
+TMPDIR=outputs/tmp/mmdiag CUDA_VISIBLE_DEVICES=0 \
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/sft/diagnose_sid_teacher_forcing.py \
+  --method tiger \
+  --data-file outputs/eval/mmbert_layer_diagnostics_fixed10k_v1/bucket_generation/validation_subset_10000.jsonl \
+  --checkpoint outputs/sft/tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-7599 \
+  --tokenizer models/Qwen3-0.6B-TIGER-MMBERT-Recall-128-1024x3-Vocab-v1 \
+  --token-mapping-filename poi_token_mapping.json \
+  --token-capacities 1024 1024 1024 154 \
+  --output-dir outputs/eval/mmbert_layer_diagnostics_fixed10k_v1/teacher_forcing \
+  --expected-epoch 3 --cutoff-len 1024 --batch-size 32 --checkpoint-rows 1000
+
+TMPDIR=outputs/tmp/mmdiag CUDA_VISIBLE_DEVICES=0 \
+/ofs/map_search/hudan/envs/poi-gr/bin/python scripts/tiger/evaluate_retrieval.py \
+  --valid-file data/sft/tiger_mmbert_recall_128_1024x3_history10_query_gid_v1/valid.jsonl \
+  --reference-validation-subset outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl \
+  --checkpoints outputs/sft/tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_gpu4_a100_e3/checkpoint-7599 \
+  --expected-checkpoint-steps 7599 --expected-checkpoint-epochs 3 \
+  --tokenizer models/Qwen3-0.6B-TIGER-MMBERT-Recall-128-1024x3-Vocab-v1 \
+  --token-mapping-filename poi_token_mapping.json \
+  --identifier-dir outputs/sid/tiger/mmbert_recall_128/TIGER-MMBERT-RECALL-128-1024x3/tiger_ids/epoch_20 \
+  --output-dir outputs/eval/mmbert_layer_diagnostics_fixed10k_v1/bucket_generation \
+  --num-beams 10 --per-device-eval-batch-size 32 --chunk-size 1000 \
+  --cutoff-len 1024 --skip-data-hash --final-checkpoint-only --bucket-diagnostics
+```
+
+- 正式运行前，100 条 Prompt/identifier preflight 和 10 条两类 GPU smoke 均通过，相关单元测试 `tests/sft/test_teacher_forcing.py tests/tiger/test_eval.py` 为 `16 passed`。第一次 Teacher-Forcing smoke 误传不受支持的 `--batch-size 10`，在 argparse 阶段退出码 2，模型未加载且没有生成指标；改为 batch 8 后 10 条 smoke 完成。该失败只属于启动参数校验，不混入正式结果。
+
+#### Gold-prefix 逐层结果
+
+| 指标 | MMBERT | TIGER 参考 | MMBERT − TIGER |
+|---|---:|---:|---:|
+| `S1` 条件 / 累计 Top-1 | 69.06% | 75.06% | -6.00pp |
+| `S2` 条件 Top-1 | 78.16% | 81.04% | -2.88pp |
+| `S1+S2` 累计 Top-1 | 54.57% | 61.75% | -7.18pp |
+| `S3` 条件 Top-1 | **88.31%** | 85.70% | +2.61pp |
+| `S1+S2+S3` 累计 Top-1 | 50.17% | 53.98% | -3.81pp |
+| 完整 `[S1,S2,S3,C]` Top-1 | 48.83% | 50.76% | -1.93pp |
+
+- MMBERT 的前三层累计 Top-10 为 87.80%，完整四层 Top-10 仍为 87.80%；逐位置 Top-10 为 S1/S2/S3/C `92.09/94.42/96.20/100.00%`。结构 Token 的 `target_open/target_close/EOS` Top-1 均为 100%，不存在闭合混淆；
+- 以 4,883 条完整四层 Top-1 正确样本反推 5,117 条失败：3,094 条在 S1 首次失败，1,449 条在正确 S1 后首次失败于 S2，440 条首次失败于 S3，只有 134 条在前三层全对后失败于 C。也就是说，完整 ID 的 Teacher-Forcing 失败有 88.78% 已在前两层发生，只有 2.62% 可归因于最后的 C；
+- 全部 10,000 条的条件 C Top-1 为 97.43%。MMBERT 自身 `C>0` 组有 1,003 条，条件 C Top-1/Top-10 为 83.2502%/100%；`C=0` 组有 8,997 条，对应 99.0108%/100%。作为方向参考，TIGER 自身 `C>0` 组为 2,356 条、条件 C Top-1 为 81.0272%；两者 mapping、样本集合和碰撞率不同，不能把 +2.22pp 写成严格配对提升；
+- MMBERT 深层局部条件预测并不弱：S3 和 C 均高于 TIGER 方向值，差距集中在 S1/S2。这与静态诊断中 MMBERT depth-1/2 类别 micro-purity 只有 52.13%/70.03%、明显低于 TIGER 的 69.28%/77.27% 相互印证。
+
+#### 自由生成 Bucket 与完整 POI
+
+| 排名口径 | HR@1 | HR@3 | HR@5 | HR@10 | 相对精确 POI 增量 |
+|---|---:|---:|---:|---:|---:|
+| 精确 `[S1,S2,S3,C]→POI` | 49.80% | 73.66% | 79.71% | 83.83% | — |
+| 三层 Bucket，保留原 Beam 槽位 | 51.11% | 74.39% | 80.30% | 84.19% | +1.31/+0.73/+0.59/+0.36pp |
+| 三层唯一可展开 Bucket | **52.05%** | **75.66%** | **81.24%** | **84.19%** | **+2.25/+2.00/+1.53/+0.36pp** |
+
+| 唯一可展开 Bucket | MMBERT | TIGER | MMBERT − TIGER |
+|---|---:|---:|---:|
+| HR@1 | 52.05% | 55.53% | -3.48pp |
+| HR@3 | 75.66% | 79.64% | -3.98pp |
+| HR@5 | 81.24% | 85.10% | -3.86pp |
+| HR@10 | 84.19% | 88.06% | -3.87pp |
+
+- 10,000 条中有 1,617 条精确 Top-10 miss，其中 1,581 条连目标三层 Bucket 都没有进入 Beam；因此 97.77% 的精确 miss 已经发生在前三层覆盖阶段，当前 Beam 内即使理想消除 C/桶内排序错误也只新增 36 条命中、HR@10 上界只增加 0.36pp。Top-1 的理想 Bucket 空间也只有 225 条、即 2.25pp；
+- 同次正式生成的 NDCG@1/3/5/10 为 `49.8000/63.9925/66.4894/67.8504%`，Valid ID Rate 为 68.894%；
+- MMBERT 固定 10k 的目标三层桶中 7,980 条为单例，1,179/647/143/50/1 条分别落在大小 `2/3—5/6—10/11—50/51+`，平均桶大小 1.4567、最大 60；TIGER 对应单例只有 61.46%、平均桶大小 2.5339。MMBERT 确实显著减少请求侧碰撞，但更低的 Bucket HR 证明“更唯一”没有转化为“更可生成”；
+- 100,000 个 Beam 候选中，30.222% 的前三层前缀无法在目录展开，4.155% 是已出现桶的重复候选，每条请求平均保留 6.5623 个唯一可展开桶；MMBERT 的不可展开率比 TIGER 23.870% 高 6.352pp，而唯一桶均值与 TIGER 6.5462 基本相同。完整 ID Valid Rate 为 68.894%，主要非法项仍是 31,024 个 `identifier_not_in_corpus`；
+- 本次 A6000 复跑的精确 HR@1/3/5/10 为 `49.80/73.66/79.71/83.83%`，相对 `EXP-20260822-03` 的 6000D 历史值变化 `-0.09/+0.10/-0.08/-0.01pp`，NDCG@10 变化 -0.0338pp。checkpoint、数据和评测代码哈希均一致，差异小于 0.10pp，记录为跨硬件无约束 Beam 的数值轨迹扰动；本实验的 Bucket 增量统一以同一次 A6000 结果为分母，不混用历史精确指标。
+
+#### 产物核验、结论与下一步
+
+- 正式根目录为 `outputs/eval/mmbert_layer_diagnostics_fixed10k_v1/`。Teacher-Forcing `result.json` / `progress.json` SHA256 为 `4c9914d0330ba023c927c9aa6cbed38846dd37c662396a60ef1db71a9d204b70` / `3b796be291b5084467645ba7805c951c874ccd52964805d015f1941cb17fc5a4`；Bucket 汇总 / 正式 run `result.json` SHA256 为 `1b45b4c302dbe8d29773476bff8e6fcf0fbbc6029a4634466f7f744c2233e9df` / `9fc3c3979cb151881d337eb742f77115c499ab2f2a76e97a03fabc4b997e9303`；
+- 正式 `candidate_trace.jsonl` 为 10,000 行、每行 10 个候选、约 36 MiB，SHA256 为 `273366469aa0fe746bf48a894a3a0ee997e4bdf0ce9ad1f09bf326da87b3a8c9`，manifest SHA256 为 `847a4dd803c22e8571322bf4e6a080273a60a90569ee0edb929a15ee78436319`。独立从 `tiger_ids.npy` 和 Token mapping 逐行复算确认：目标 code、目标/候选桶大小、原始 Token 前缀、exact/raw/unique rank、唯一桶列表和三组 rank histogram 均为 0 mismatch；10 个 1,000 行分片各自行数与哈希通过，顺序拼接 SHA256 与总轨迹完全一致；
+- Teacher-Forcing / Bucket 日志 SHA256 为 `0c48cfe909d222c5dedc81e28a733152f1357d722a9c8746301dcfba518bc68c` / `2b962d5666701b21e615c44cfcfab466534643e66944baf9a368494ec3b8bced`，均无 Traceback、OOM、失败或 batch 回退。全部模型、轨迹和日志继续保持 Git 忽略；
+- 核心结论：MMBERT 的 128 维监督向量提高了连续召回、码本均衡性、三层唯一率和冷目标局部泛化，但当前 `MMBERT→RQ-VAE` 的粗层离散组织不具备更好的 Query 可预测性。失败根因不是 C 容量或桶内消歧，而是 S1/S2 的层级对齐和自由生成目标桶覆盖；继续减碰撞、扩 C、增加 epoch/seed 或沿当前 SID 直接重训都缺乏证据；
+- 可验证的下一假设是：MMBERT 的价值更适合作为冻结 TIGER 候选的连续 scorer/teacher，而不是直接替换生成 identifier。下一最小门禁建议复用现有 TIGER/MMBERT 候选轨迹和冻结向量，先离线测量 MMBERT 对 TIGER 候选的重排增量、候选互补覆盖及冷目标分桶；只有该无训练门禁为正，才讨论 prefix-preserving distillation/辅助排序目标。该建议待用户确认，本实验不启动新 SFT，也不批准继续扩搜静态码本。
+
+## EXP-20260904-03：活跃闭集 MMBERT Recall 128 与 TIGER `512³` SID
+
+### 目标、数据与严格对照
+
+- 日期：2026-09-04—05；状态：已完成。目标是在新的 716,245 POI 活跃闭集上，用线上 MMBERT Recall checkpoint 重新编码目录，并保持 `EXP-20260904-02` 的三层 `512×512×512` TIGER RQ-VAE、全目录 KMeans 初始化、20 epoch 和稳定 collision token 规则不变，形成与 active-BGE 可直接比较的静态 SID 候选；
+- POI 主表固定为 `data/beijing_poi_active_order14d_history10_20260715_json/`，POI ID SHA256 为 `8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81`。MMBERT 使用线上 checkpoint `/ofs/map_search/xiaolu/multilingual_search/recall/mmBERT-emb/output_checkpoint/output_4gpus_1pos_30neg_add_mlp_v2_plus/checkpoint-00612000`，仍只读取冻结的名称、地址和别名文本，执行 attention-mask mean、训练好的 `Linear(768,128)` 和 L2 normalize，不读取 query 或订单标签；
+- 编码产物为 `outputs/embeddings/beijing_poi_active_order14d_history10_mmbert_recall_128/`，shape `[716245,128]`、float16，全部 finite，L2 norm min/mean/max 为 `0.999858/1.000000/1.000154`。manifest / NPY SHA256 为 `424b8b61315e2ed1f0368b99bd1091773080f72f13ff94bd499b0ca528d10b56` / `adb7584d23a748af54c579d924a1a7b365ab8d935a6dda9db25f9cb8c78ceb28`；编码耗时 2,979.66 秒，吞吐 240.38 POI/s；
+- SID 配置为 `configs/sid/rqvae_tiger_mmbert_recall_128_active_716k_512x3.yaml`：输入/隐藏/latent 为 `128/512/256`，三层 `512³`，三级 FAISS GPU KMeans 均覆盖 716,245/716,245 行、20 iterations，seed 42、batch 4096、20 epoch。全流程入口为 `launchers/run_build_tiger_active716k_mmbert_recall_128_512x3.sh`，7 个阶段均以退出码 0 完成。
+
+### 训练与静态 SID 结果
+
+- 三级 KMeans 初始化后每层均使用 512/512 个码、无死码，初始化 MSE 为 `0.0385193/0.0310101/0.0258807`；正式训练段耗时 57.85 秒，epoch 20 Train/Validation reconstruction cosine 为 `0.716160/0.714953`。全量导出的三级码字利用均为 512/512，normalized entropy 为 `0.978291/0.986728/0.987152`；
+- 三层 SID 共 648,917 个不同组合，唯一率 `90.5999%`；碰撞 excess 67,328（`9.4001%`），116,159 个 POI 位于碰撞桶（`16.2178%`），共 48,831 个碰撞桶。桶大小 P50/P90/P95/P99/Max 为 `1/1/2/3/30`；
+- 按原 TIGER 规则在三层桶内按 `poi_id` 字典序稳定分配第四层，只需 `C0–C29` 共 30 个 collision token。最终 `[S1,S2,S3,C]` 为 `[716245,4]` int32，716,245 个标识全部唯一；独立复检确认前三列逐行等于 `sid_codes.npy`、第四列逐行等于 `collision_codes.npy`，各层范围为 `[0,511]/[0,511]/[0,511]/[0,29]`。
+
+| 同一 active 目录与 `512³` 协议 | active-BGE | active-MMBERT | MMBERT − BGE |
+|---|---:|---:|---:|
+| 三层 SID 唯一率 | 77.0310% | **90.5999%** | **+13.5689pp** |
+| collision excess ratio | 22.9690% | **9.4001%** | **-13.5689pp** |
+| 碰撞 POI ratio | 33.7781% | **16.2178%** | **-17.5603pp** |
+| 最大三层桶 | 152 | **30** | **-122** |
+| 所需 collision token | 152 | **30** | **-122** |
+| 三级码字利用 | 229/506/491 | **512/512/512** | 全层满利用 |
+
+### 产物、核验与结论
+
+- 正式 run 位于 `outputs/sid/tiger/active_716k_mmbert_recall_128/TIGER-ACTIVE716K-MMBERT-RECALL-128-512x3-FULLINIT/`；epoch-20 checkpoint / resolved config SHA256 为 `239d7d468a191e838494fa3ac549171c900913fe52ca3309137a838c88eb62b1` / `762b2dcc744f7ce557ce6af47b226b6eb8fbf9c9d5ed2c75898a0b81b6b3cb01`；
+- SID manifest / NPY SHA256 为 `44e7b9fb4b927066b378894124037484a552f98dc8c32f5437750ebc31fbff6d` / `d53e5e800b577714d924eafe01d997c35d8166702a151f4faa6a0c4378c4a82e`；identifier manifest / NPY / mapping SHA256 为 `f8330dfff2a419fb533806cd26bc1c55a7999245d24147486470f38f9de1a954` / `978f458fdf2f7f2e73b4908d32cca736f8e264952151251854b2584abfdc4d1a` / `fbc2aa910018bb8e7a95748a503afa874d4f4540e0331f0ab34a5fa9f0c6277e`。正式 pipeline 日志 SHA256 为 `b87361c446b6c6c411aa13f17a1bef75e4c54b7b74b7bad00d9ab429922f3114`；
+- 相关 Embedding subset/RQ-VAE 回归测试、Python 编译和 launcher shell 语法检查均通过。两次未完成的慢速全库 subset 尝试已完整保留在 `outputs/quarantine/EXP-20260904-03_active_mmbert_sid/`，不混入正式结果；正式向量由可断点恢复的 active 目录直接编码生成；
+- 本实验只证明 MMBERT 在同一活跃目录、同一码本容量下显著改善静态量化均衡和碰撞规模，不能写成生成式检索超过 TIGER。旧 233 万目录上的 MMBERT 已出现“静态 SID 更优、SFT 反而更差”，因此下一步若投入训练资源，必须与 active-BGE 使用完全相同的样本、词表构造、global batch、三轮训练和六项评测协议做配对 SFT，最终只以固定 10k 和四类泛化 HR/NDCG 决策。
+
+## EXP-20260906-01：活跃闭集 MMBERT 配对 SFT 输入与六项评测入口
+
+### 严格配对数据与 Token 门禁
+
+- 日期：2026-09-05—06；状态：正式训练入口已就绪，尚未产生 checkpoint。基于 `EXP-20260904-03` 的 `[S1,S2,S3,C]` 唯一标识重建 history10 数据，Messages 位于 `data/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1/`，Train/Valid/Test 为 `7,586,410/597,421/606,682`，总计 8,790,513 条；manifest / special-token SHA256 为 `e8bdb183f2cabcbd58cae5a96c770526cce8b2bee26f72b9b01934fc00b9abc7` / `97c22e3f8fb5c03cba951680ac13bb543ea86df467b6b2158bf3994e8de1a51e`；
+- 与 `EXP-20260905-01` 的 active-BGE Messages 做了 8,790,513 条同行同序全量审计：`sample_id/user_token/order_id/searchid/target_poi_id/history_length/split` 完全相同，Prompt 和 Target 在把 identifier 归一化后完全相同，只有历史与目标 identifier 字段变化。审计日志位于 `outputs/run_control/tiger_active716k_mmbert_sft_data/paired_audit.log`，最终状态为 `only_identifier_fields_differ=true`；
+- 扩词模型位于 `models/Qwen3-0.6B-TIGER-Active716K-MMBERT-Recall-128-512x3-Vocab-v1/`：在 Qwen3-0.6B 的 151,669 词表上新增 3,614 个普通原子 Token，扩至 155,283。Token mapping / tokenizer JSON SHA256 为 `fb97ffc3210759c8820f90e9fb7638d0d943f568263dd23fe02c4131c73192d0` / `7c374e49a90a341102b6f7fa5d5d218c02a17f7c49db770fe1aed54f7e097930`，全部新增 Token 通过原子编码和往返解码门禁；
+- Train+Valid 共 8,183,831 条完成 `cutoff_len=1024` 全量预检：输入/完整序列最大为 `945/953`，目标长度固定 8，超过 1024、requested/effective cutoff 下的 Assistant 目标截断均为 0。正式 packed cache 位于 `data/sft/tokenized/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1/`，Train/Validation 为 `1,296,883/96,949`，10k/2k smoke 为 `1,711/323`；cache manifest / length stats SHA256 为 `b8d6022a52e3806ce52d4311d8719fa672ad459705b3a1e751f7e1d49bd5514d` / `d1b80cc56460aa36b96231b7a081002a9c5f88f482da31154b436c7ace3a2014`；
+- 第一次 cache 尝试在沙箱的 16 进程格式转换入口因 `multiprocess.Manager` 无法创建 AF_UNIX socket 而 `PermissionError` 退出，未发布正式目录；宿主环境重试复用已完成的全量长度预检，最终退出码 0 并原子发布 28G cache。该调试失败不混入正式训练结果，也不是数据、长度或 Tokenizer 错误。
+
+### 训练与评测入口
+
+- 正式配置为 `configs/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1.yaml`：Qwen3-0.6B 全参数 SFT、4×RTX PRO 6000D、单卡 batch 8、累积 16、global batch 512、BF16、seed 42、三轮。按 1,296,883 packed Train rows 计算为每轮 2,533 step，epoch 3 固定 `checkpoint-7599`；
+- 一键入口为 `launchers/run_train_tiger_active716k_mmbert_recall_128_512x3_4x6000d_3epoch.sh`。Shell 语法和全链路 dry-run 均以退出码 0 完成：训练后只评 epoch 3，同时运行固定同业务键 Validation 10k 的无约束 Beam=10、全目录合法路径约束，以及已见 Query/未见 Query–POI、新 Query/已见目标、长尾目标、冷目标四个冻结泛化 10k，共六项；
+- 配置 / launcher SHA256 为 `32c6b8f55c214f1db7845bdd1ad7fcd126b58ba8e05c8423b0bb031fdc419cec` / `5b738bd149885e1aa0108946980e3d938ef81668e9175ea7027824042481e669`。相关 TIGER 数据和训练入口回归测试为 `35 passed`。本实验目前只确认“可以安全提交正式训练”，没有 Loss、HR、NDCG 或相对 active-BGE 的生成式结论；最终仅按六项配对 SFT 结果决策 MMBERT 是否保留。
+
+## EXP-20260908-02：活跃闭集 MMBERT 配对三轮 SFT 与评测中止
+
+- 日期：2026-09-07—08；状态：三轮 SFT 完成，生成评测尚未启动。数据、Tokenizer、SID 和配置沿用 `EXP-20260906-01`；代码基线为 `54802e6674e283722ecee00fb862530df30cef9a`，运行时工作树有未提交改动；
+- 4×RTX PRO 6000D、BF16、单卡 batch 8、累积 16、global batch 512，共完成 7,599 step。epoch 1/2/3 Validation Loss 为 `0.476800/0.363435/0.348109`，最终 checkpoint 为 `outputs/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7599`；模型、优化器、调度器、四卡 RNG 状态和 Trainer state 均完整；
+- 平台 failed 的原因与 active-BGE 相同：训练成功后未写出 `epoch_checkpoints.json`，后置索引检查退出；索引现已按三个标准 checkpoint 补建。该故障不影响 checkpoint，但使平台六项生成评测没有启动；
+- 本服务器的配对补评 runner 按 TIGER→MMBERT 顺序执行，用户在 TIGER 首个泛化单元期间要求停止，因此 runner 从未进入 MMBERT。当前没有 active-MMBERT 的 HR/NDCG/合法率，不能根据较高的 Validation Loss 或静态 SID 唯一率判断它是否优于 active-BGE；
+- 训练产物位于 `outputs/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1_gpu4_6000d_e3/`，运行中止记录位于 `outputs/run_control/active716k_pair_eval/`。若继续，直接在训练平台从现有 epoch-3 checkpoint 运行固定 10k 双解码和四类泛化，不在本服务器恢复。
+
+### 2026-09-09：A100 六项评测闭环
+
+- 复用同一 `checkpoint-7599` 在 4×A100 平台完成固定 10k 无约束/合法路径与四个无约束泛化 10k。六项均为 `completed`、各 10,000 条，Test 未读取；与 active-BGE 对应单元的业务键顺序 SHA256 一致，target mismatch 为 0。active-BGE 的四个泛化单元也在本次 A100 任务中完成，构成严格同卡型配对；但其两项固定 10k 已存在而被 launcher 跳过，所以固定集的小幅差异需保留 A6000/A100 硬件口径提示；
+
+| Validation 切片 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID Rate |
+|---|---:|---:|---:|---:|---:|---:|
+| 固定 10k，无约束 | 49.46% | 73.27% | 79.61% | 84.04% | 67.6860% | 70.243% |
+| 固定 10k，合法路径 | 49.77% | 73.79% | 79.95% | 84.57% | 68.0924% | 100% |
+| 已见 Query / 未见 Query–POI | 15.72% | 33.83% | 42.05% | 50.63% | 32.4171% | 69.679% |
+| 新 Query / 已见目标 | 44.28% | 59.82% | 64.58% | 68.54% | 56.7105% | 48.779% |
+| 长尾目标（Train 频次 1—5） | 20.14% | 29.63% | 34.14% | 38.84% | 29.0055% | 40.648% |
+| 冷目标（Train 频次 0） | 8.66% | 14.06% | 16.72% | 19.92% | 13.9358% | 33.731% |
+| 四类宏平均 | 22.2000% | 34.3350% | 39.3725% | 44.4825% | 33.0172% | 48.2093% |
+
+- 固定 10k 无约束相对 active-BGE 的 HR@1/HR@10/NDCG@10 为 `-0.32/-0.47/-0.3636pp`；合法路径下为 `-0.02/-0.51/-0.1710pp`，因此 MMBERT 没有超过固定主评测。四类泛化宏平均则为 `+2.0750/+2.2175/+2.3183pp`，主要由长尾目标的 `+4.40/+2.26/+3.7958pp` 和冷目标的 `+4.21/+10.44/+7.3830pp` 贡献；已见 Query/未见 Pair 三项反而下降 `1.16/2.82/1.9627pp`，不是全面提升；
+- MMBERT 四类宏平均 Valid ID Rate 比 active-BGE 低 `11.1823pp`，冷目标低 `15.458pp`，但长尾/冷启动召回仍显著更高。这说明其 SID 含有更强的稀疏目标语义泛化信号，同时 identifier 路径更难被 Qwen 合法生成；静态三层唯一率和满码本利用率不能直接等价为下游可生成性；
+- 相对旧 233 万目录 MMBERT，active 版固定无约束 HR@1/HR@10/NDCG@10 为 `-0.43/+0.20/-0.1982pp`，四类宏平均为 `-0.4125/-0.1100/-0.2429pp`，整体基本稳定。对照 active-BGE 的明显回落，当前最有价值的信号不是“active 缩库提高主指标”，而是“MMBERT 表征对目录/SID 重建及长尾冷目标更稳健”；它仍不足以整体替代 TIGER，可作为后续可生成前缀结构中的语义教师或辅助信号；
+- 完整六项汇总为 `outputs/eval/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1_gpu4_6000d_e3/epoch3_evaluation_summary.json`，SHA256 为 `cd682d42fee5d933110fd4e7a43687c41e05c7c566e6655999592143ed518911`。

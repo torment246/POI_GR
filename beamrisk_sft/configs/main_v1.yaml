@@ -1,0 +1,46 @@
+schema_version: beamrisk-sft-config-v1
+
+paths:
+  baseline_sft_config: configs/sft/tiger_bge_m3_1024x3_history10_query_gid_v1.yaml
+  model: models/Qwen3-0.6B-TIGER-Vocab-v1
+  tokenized_cache: data/sft/tokenized/tiger_bge_m3_1024x3_history10_query_gid_v1
+  raw_train: data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/train.jsonl
+  raw_valid: data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl
+  raw_train_manifest: data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/manifest.json
+  fixed_validation_subset: outputs/eval/qwen3_0.6b_main_v1_a100_e2/validation_subset_10000.jsonl
+  tiger_identifier_dir: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20
+  tiger_mapping: outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20/poi_tiger_id_mapping.parquet
+  poi_catalog_dir: data/beijing_poi_clean_20260715_json
+  candidate_pool_dir: beamrisk_sft/outputs/cache/train_candidates_sha500k_v1
+  sft_output_dir: beamrisk_sft/outputs/sft/main_v1
+  mining_root: beamrisk_sft/outputs/mining
+  eval_output_dir: beamrisk_sft/outputs/eval/main_v1
+
+training:
+  world_size: 4
+  epochs: 3
+  cutoff_len: 512
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 8
+  expected_global_batch_size: 512
+  expected_optimizer_steps_per_epoch: 5571
+  seed: 42
+  data_seed: 42
+
+mining:
+  candidate_pool_size: 500000
+  target_pair_count: 100000
+  minimum_pair_count: 50000
+  per_rank_pair_cap: 30000
+  batch_size: 16
+  beam_size: 10
+  max_new_tokens: 8
+
+risk:
+  weight: 0.2
+  temperature: 1.0
+  margin: 0.0
+  interval_optimizer_steps: 4
+  global_batch_size: 128
+  per_device_batch_size: 32
+  per_device_micro_batch_size: 8

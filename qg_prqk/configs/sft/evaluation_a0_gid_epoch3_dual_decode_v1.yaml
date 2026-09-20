@@ -1,0 +1,14 @@
+schema_version: qg-prqk-a0-evaluation-v1
+# 继承 QG-HRQ 的五组固定业务键与全部生成参数，只替换 POI-only 标识与 checkpoint。
+reference_config: qg_prqk/configs/sft/evaluation_epoch3_fixed10k_generalization_v1.yaml
+reference_config_sha256: 921fc45205fc222c2997826e95e09339feca8f543ea7695b17749c0485fea1ed
+output_root: qg_prqk/outputs/eval/a0_gid_epoch3_dual_decode_v1
+run_control: qg_prqk/outputs/run_control/eval_a0_gid_dual_decode_v1
+variant_spec:
+  data_dir: qg_prqk/outputs/sft_data/a0_gid_order_a_history10_v1
+  data_manifest_sha256: 4605137fefe865f655d42398dcabfe34cab170df6a62842f2474e652be1a003e
+  identifier_dir: qg_prqk/outputs/final_identifiers/a0_gid_order_a_v1
+  identifier_manifest_sha256: 1237c138783054c426fde41521c2964b2132b231a6c2b150865e9a962dc4f82a
+  checkpoint: qg_prqk/outputs/sft/a0_gid_history10_v1_gpu4_e3/checkpoint-8955
+  expected_step: 8955
+  max_new_tokens: 13

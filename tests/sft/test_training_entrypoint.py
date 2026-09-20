@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from scripts.sft.train import (
     build_training_config,
     configure_distributed_environment,
+    run_llamafactory_launcher,
     validate_args,
+    validate_resume_checkpoint,
     validate_tokenized_cache_cutoff,
     write_epoch_checkpoint_index,
 )
@@ -212,6 +214,55 @@ class RunTrainSftTest(unittest.TestCase):
             args = make_args(resume=1, resume_path=temporary)
             with self.assertRaises(FileNotFoundError):
                 validate_args(args, PROJECT_ROOT)
+
+    def test_four_gpu_resume_accepts_rank_rng_states(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary)
+            for name in (
+                "model.safetensors",
+                "optimizer.pt",
+                "scheduler.pt",
+                "trainer_state.json",
+                "rng_state_0.pth",
+                "rng_state_1.pth",
+                "rng_state_2.pth",
+                "rng_state_3.pth",
+            ):
+                (checkpoint / name).touch()
+            self.assertEqual(validate_resume_checkpoint(checkpoint, 4), checkpoint)
+
+    def test_four_gpu_resume_rejects_missing_rank_rng_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary)
+            for name in (
+                "model.safetensors",
+                "optimizer.pt",
+                "scheduler.pt",
+                "trainer_state.json",
+                "rng_state_0.pth",
+                "rng_state_1.pth",
+                "rng_state_2.pth",
+            ):
+                (checkpoint / name).touch()
+            with self.assertRaisesRegex(FileNotFoundError, "rng_state_3.pth"):
+                validate_resume_checkpoint(checkpoint, 4)
+
+    def test_single_gpu_resume_accepts_either_rng_filename(self):
+        common = (
+            "model.safetensors",
+            "optimizer.pt",
+            "scheduler.pt",
+            "trainer_state.json",
+        )
+        for rng_filename in ("rng_state.pth", "rng_state_0.pth"):
+            with self.subTest(rng_filename=rng_filename):
+                with tempfile.TemporaryDirectory() as temporary:
+                    checkpoint = Path(temporary)
+                    for name in (*common, rng_filename):
+                        (checkpoint / name).touch()
+                    self.assertEqual(
+                        validate_resume_checkpoint(checkpoint, 1), checkpoint
+                    )
 
     def test_tiger_four_gpu_epoch_config(self):
         args = make_args(
@@ -825,12 +876,42 @@ class RunTrainSftTest(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
+                (checkpoint / "model.safetensors").touch()
+                (checkpoint / "config.json").write_text("{}", encoding="utf-8")
             path = write_epoch_checkpoint_index(output_dir, 3.0)
             payload = __import__("json").loads(path.read_text(encoding="utf-8"))
             self.assertEqual(
                 [item["epoch"] for item in payload["checkpoints"]],
                 [1, 2, 3],
             )
+
+    def test_distributed_launcher_success_exit_continues_postprocessing(self):
+        calls = []
+
+        def launch():
+            calls.append("launch")
+            raise SystemExit(0)
+
+        run_llamafactory_launcher(launch)
+        calls.append("postprocess")
+        self.assertEqual(calls, ["launch", "postprocess"])
+
+    def test_distributed_launcher_failure_exit_is_preserved(self):
+        with self.assertRaises(SystemExit) as context:
+            run_llamafactory_launcher(lambda: (_ for _ in ()).throw(SystemExit(7)))
+        self.assertEqual(context.exception.code, 7)
+
+    def test_epoch_checkpoint_index_rejects_step_directory_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary) / "checkpoint-100"
+            checkpoint.mkdir()
+            (checkpoint / "trainer_state.json").write_text(
+                json.dumps({"epoch": 1.0, "global_step": 99}), encoding="utf-8"
+            )
+            (checkpoint / "model.safetensors").touch()
+            (checkpoint / "config.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "global_step"):
+                write_epoch_checkpoint_index(Path(temporary), 1.0)
 
 
 if __name__ == "__main__":

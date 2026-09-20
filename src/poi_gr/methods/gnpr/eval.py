@@ -106,13 +106,17 @@ def load_gnpr_token_ids(
             raise GnprEvalError(f"GNPR Token 不是稳定原子 Token：{token}")
         return expected
 
+    dedup_codes = sorted(int(token[3:-1]) for token in token_mapping
+                         if token.startswith("<d_") and token.endswith(">"))
+    if not dedup_codes or dedup_codes != list(range(len(dedup_codes))):
+        raise GnprEvalError("GNPR Dedup Token 必须从 0 开始连续")
     values = GnprTokenIds(
         target_open=token_id("<TARGET_POI>"),
         target_close=token_id("</TARGET_POI>"),
         a=tuple(token_id(f"<a_{code}>") for code in range(512)),
         b=tuple(token_id(f"<b_{code}>") for code in range(512)),
         c=tuple(token_id(f"<c_{code}>") for code in range(512)),
-        dedup=tuple(token_id(f"<d_{code}>") for code in range(223)),
+        dedup=tuple(token_id(f"<d_{code}>") for code in dedup_codes),
         eos=int(tokenizer.eos_token_id),
     )
     flattened = (
@@ -150,25 +154,27 @@ class GnprIdIndex:
         sorted_keys: np.ndarray,
         sorted_rows: np.ndarray,
         poi_ids: Any,
+        dedup_capacity: int = 223,
     ) -> None:
         self.sorted_keys = sorted_keys
         self.sorted_rows = sorted_rows
         self.poi_ids = poi_ids
         self.row_count = len(sorted_rows)
+        self.dedup_capacity = dedup_capacity
 
     @staticmethod
-    def pack(codes: Sequence[int]) -> int:
+    def pack(codes: Sequence[int], dedup_capacity: int = 223) -> int:
         if len(codes) != 4:
             return -1
         a, b, c, dedup = (int(value) for value in codes)
         if not (0 <= a < 512 and 0 <= b < 512 and 0 <= c < 512):
             return -1
-        if not -1 <= dedup < 223:
+        if not -1 <= dedup < dedup_capacity:
             return -1
-        return (((a * 512) + b) * 512 + c) * 224 + dedup + 1
+        return (((a * 512) + b) * 512 + c) * (dedup_capacity + 1) + dedup + 1
 
     def lookup(self, codes: Sequence[int]) -> int:
-        key = self.pack(codes)
+        key = self.pack(codes, self.dedup_capacity)
         if key < 0:
             return -1
         index = int(np.searchsorted(self.sorted_keys, key))
@@ -200,7 +206,8 @@ def load_gnpr_id_index(identifier_dir: Path) -> tuple[GnprIdIndex, dict[str, Any
     details = manifest.get("gnpr_ids", {})
     if details.get("codebook_capacities") != [512, 512, 512]:
         raise GnprEvalError("GNPR 三层码本容量与评测协议不一致")
-    if details.get("dedup_token_capacity") != 223:
+    dedup_capacity = details.get("dedup_token_capacity")
+    if isinstance(dedup_capacity, bool) or not isinstance(dedup_capacity, int) or dedup_capacity <= 0:
         raise GnprEvalError("GNPR Dedup Token 容量与评测协议不一致")
     mapping_path = identifier_dir / manifest["mapping"]["path"]
     ids_path = identifier_dir / details["path"]
@@ -214,9 +221,12 @@ def load_gnpr_id_index(identifier_dir: Path) -> tuple[GnprIdIndex, dict[str, Any
     expected_rows = int(manifest["mapping"]["rows"])
     if codes.shape != (expected_rows, 4) or codes.dtype != np.int32:
         raise GnprEvalError("GNPR identifier NPY shape/dtype 不一致")
+    if (np.any(codes[:, :3] < 0) or np.any(codes[:, :3] >= 512)
+            or np.any(codes[:, 3] < -1) or np.any(codes[:, 3] >= dedup_capacity)):
+        raise GnprEvalError("GNPR identifier code 超出词表范围")
     keys = (
         ((codes[:, 0].astype(np.int64) * 512 + codes[:, 1]) * 512 + codes[:, 2])
-        * 224
+        * (dedup_capacity + 1)
         + codes[:, 3]
         + 1
     )
@@ -235,6 +245,7 @@ def load_gnpr_id_index(identifier_dir: Path) -> tuple[GnprIdIndex, dict[str, Any
             sorted_keys=sorted_keys,
             sorted_rows=np.asarray(order, dtype=np.int64),
             poi_ids=poi_ids,
+            dedup_capacity=dedup_capacity,
         ),
         {
             "identifier_manifest": str(manifest_path),
@@ -248,7 +259,7 @@ def load_gnpr_id_index(identifier_dir: Path) -> tuple[GnprIdIndex, dict[str, Any
     )
 
 
-def parse_target_codes(content: str) -> tuple[int, int, int, int]:
+def parse_target_codes(content: str, *, dedup_capacity: int = 223) -> tuple[int, int, int, int]:
     """Parse the exact conditional-length GNPR target serialization."""
 
     match = re.fullmatch(
@@ -259,7 +270,7 @@ def parse_target_codes(content: str) -> tuple[int, int, int, int]:
         raise GnprEvalError("Assistant content 不是严格 GNPR Target 格式")
     a, b, c, dedup = match.groups()
     codes = (int(a), int(b), int(c), -1 if dedup is None else int(dedup))
-    if GnprIdIndex.pack(codes) < 0:
+    if GnprIdIndex.pack(codes, dedup_capacity) < 0:
         raise GnprEvalError("Assistant GNPR identifier 超出码本范围")
     return codes
 
@@ -271,6 +282,7 @@ def encode_gnpr_record(
     template: Any,
     cutoff_len: int,
     split: str = "valid",
+    dedup_capacity: int = 223,
 ) -> GnprExample:
     """Validate one GNPR SFT sample and recreate its training prompt."""
 
@@ -287,7 +299,7 @@ def encode_gnpr_record(
     target_content = messages[1].get("content")
     if not isinstance(user_content, str) or not isinstance(target_content, str):
         raise GnprEvalError("GNPR Messages content 必须是字符串")
-    target_codes = parse_target_codes(target_content)
+    target_codes = parse_target_codes(target_content, dedup_capacity=dedup_capacity)
     try:
         prompt_ids, target_ids = encode_prompt_like_training(
             tokenizer=tokenizer,

@@ -694,85 +694,84 @@ def build_genpoi_geope_embeddings(
                 np.save(handle, source_mean, allow_pickle=False)
 
         output_embeddings_path = temporary_dir / "embeddings.npy"
-        output_embeddings = np.lib.format.open_memmap(
-            output_embeddings_path,
-            mode="w+",
-            dtype=np.dtype(output_dtype),
-            shape=(effective_rows, embedding_dim),
-        )
-        norm_delta_sum = 0.0
-        norm_delta_max = 0.0
-        vector_delta_sum = 0.0
-        preprocessing_vector_delta_sum = 0.0
-        rotation_norm_delta_sum = 0.0
-        rotation_norm_delta_max = 0.0
-        metric_rows = 0
-        for start in range(0, effective_rows, chunk_rows):
-            stop = min(start + chunk_rows, effective_rows)
-            source_chunk = np.asarray(
-                source_embeddings[start:stop],
-                dtype=np.float32,
-            )
-            if source_mean is None:
-                preprocessed_chunk = source_chunk
-            else:
-                preprocessed_chunk = center_and_l2_normalize_embeddings(
-                    source_chunk,
-                    source_mean,
+        # Sequential writes avoid dirty mmap page stalls on the shared filesystem.
+        with output_embeddings_path.open("wb", buffering=8 * 1024 * 1024) as output_handle:
+            np.lib.format.write_array_header_2_0(output_handle, {
+                "descr": np.dtype(output_dtype).str,
+                "fortran_order": False,
+                "shape": (effective_rows, embedding_dim),
+            })
+            norm_delta_sum = 0.0
+            norm_delta_max = 0.0
+            vector_delta_sum = 0.0
+            preprocessing_vector_delta_sum = 0.0
+            rotation_norm_delta_sum = 0.0
+            rotation_norm_delta_max = 0.0
+            metric_rows = 0
+            for start in range(0, effective_rows, chunk_rows):
+                stop = min(start + chunk_rows, effective_rows)
+                source_chunk = np.asarray(
+                    source_embeddings[start:stop],
+                    dtype=np.float32,
                 )
-            rotated = apply_geope_rotation(
-                preprocessed_chunk,
-                coordinates[start:stop],
-                reference_points,
-                device=rotation_device,
-            )
-            if metric_rows < metric_sample_rows:
-                sample_stop = min(
-                    len(source_chunk),
-                    metric_sample_rows - metric_rows,
+                if source_mean is None:
+                    preprocessed_chunk = source_chunk
+                else:
+                    preprocessed_chunk = center_and_l2_normalize_embeddings(
+                        source_chunk,
+                        source_mean,
+                    )
+                rotated = apply_geope_rotation(
+                    preprocessed_chunk,
+                    coordinates[start:stop],
+                    reference_points,
+                    device=rotation_device,
                 )
-                source_sample = source_chunk[:sample_stop]
-                preprocessed_sample = preprocessed_chunk[:sample_stop]
-                rotated_sample = rotated[:sample_stop]
-                source_norms = np.linalg.norm(source_sample, axis=1)
-                rotated_norms = np.linalg.norm(rotated_sample, axis=1)
-                norm_delta = np.abs(source_norms - rotated_norms)
-                rotation_norm_delta = np.abs(
-                    np.linalg.norm(preprocessed_sample, axis=1)
-                    - rotated_norms
-                )
-                norm_delta_sum += float(norm_delta.sum())
-                norm_delta_max = max(
-                    norm_delta_max,
-                    float(norm_delta.max(initial=0.0)),
-                )
-                vector_delta_sum += float(
-                    np.linalg.norm(
-                        source_sample - rotated_sample,
-                        axis=1,
-                    ).sum()
-                )
-                preprocessing_vector_delta_sum += float(
-                    np.linalg.norm(
-                        source_sample - preprocessed_sample,
-                        axis=1,
-                    ).sum()
-                )
-                rotation_norm_delta_sum += float(rotation_norm_delta.sum())
-                rotation_norm_delta_max = max(
-                    rotation_norm_delta_max,
-                    float(rotation_norm_delta.max(initial=0.0)),
-                )
-                metric_rows += sample_stop
-            output_embeddings[start:stop] = rotated
-            if progress is not None and (
-                stop == effective_rows or stop % (chunk_rows * 32) == 0
-            ):
-                progress(
-                    f"GenPOI GeoPE 旋转：{stop:,}/{effective_rows:,}"
-                )
-        output_embeddings.flush()
-        del output_embeddings
+                if metric_rows < metric_sample_rows:
+                    sample_stop = min(
+                        len(source_chunk),
+                        metric_sample_rows - metric_rows,
+                    )
+                    source_sample = source_chunk[:sample_stop]
+                    preprocessed_sample = preprocessed_chunk[:sample_stop]
+                    rotated_sample = rotated[:sample_stop]
+                    source_norms = np.linalg.norm(source_sample, axis=1)
+                    rotated_norms = np.linalg.norm(rotated_sample, axis=1)
+                    norm_delta = np.abs(source_norms - rotated_norms)
+                    rotation_norm_delta = np.abs(
+                        np.linalg.norm(preprocessed_sample, axis=1)
+                        - rotated_norms
+                    )
+                    norm_delta_sum += float(norm_delta.sum())
+                    norm_delta_max = max(
+                        norm_delta_max,
+                        float(norm_delta.max(initial=0.0)),
+                    )
+                    vector_delta_sum += float(
+                        np.linalg.norm(
+                            source_sample - rotated_sample,
+                            axis=1,
+                        ).sum()
+                    )
+                    preprocessing_vector_delta_sum += float(
+                        np.linalg.norm(
+                            source_sample - preprocessed_sample,
+                            axis=1,
+                        ).sum()
+                    )
+                    rotation_norm_delta_sum += float(rotation_norm_delta.sum())
+                    rotation_norm_delta_max = max(
+                        rotation_norm_delta_max,
+                        float(rotation_norm_delta.max(initial=0.0)),
+                    )
+                    metric_rows += sample_stop
+                output_handle.write(np.asarray(rotated, dtype=output_dtype).tobytes(order="C"))
+                if progress is not None and (
+                    stop == effective_rows or stop % (chunk_rows * 32) == 0
+                ):
+                    progress(
+                        f"GenPOI GeoPE 旋转：{stop:,}/{effective_rows:,}"
+                    )
 
         output_filenames = OUTPUT_FILENAMES + (
             ("source_mean.npy",)

@@ -13,7 +13,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Protocol, Sequence
 
 import numpy as np
 import torch
@@ -25,6 +25,17 @@ from .rqvae import RQVAE, RQVAEOutput
 
 class RQVAETrainingError(RuntimeError):
     pass
+
+
+class KMeansInitializationConfig(Protocol):
+    """Minimal configuration contract for residual codebook initialization."""
+
+    kmeans_backend: str
+    kmeans_iterations: int
+    kmeans_batch_size: int
+    kmeans_max_points_per_centroid: int
+    seed: int
+    show_progress: bool
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,7 @@ class RQVAETrainingConfig:
     weight_decay: float
     gradient_clip_norm: float
     kmeans_backend: str
+    kmeans_sample_scope: str
     kmeans_sample_size: int
     kmeans_iterations: int
     kmeans_batch_size: int
@@ -288,6 +300,12 @@ def load_training_config(
             "启用 Diversity Loss 时，diversity_start_epoch 不能超过 max_epochs"
         )
 
+    kmeans_sample_scope = str(initialization.get("sample_scope", "train"))
+    if kmeans_sample_scope not in {"train", "all"}:
+        raise RQVAETrainingError(
+            "initialization.sample_scope 只能是 train 或 all"
+        )
+
     return RQVAETrainingConfig(
         source_config=config_path.resolve(),
         experiment_id=experiment_id,
@@ -336,6 +354,7 @@ def load_training_config(
             "training.gradient_clip_norm",
         ),
         kmeans_backend=resolved_backend,
+        kmeans_sample_scope=kmeans_sample_scope,
         kmeans_sample_size=resolved_sample_size,
         kmeans_iterations=_positive_int(
             initialization.get("iterations"), "initialization.iterations"
@@ -404,6 +423,8 @@ def config_payload(config: RQVAETrainingConfig) -> dict[str, Any]:
         payload.pop("diversity_scale")
         payload.pop("diversity_temperature")
         payload.pop("diversity_start_epoch")
+    if config.kmeans_sample_scope == "train":
+        payload.pop("kmeans_sample_scope")
     return payload
 
 
@@ -694,6 +715,7 @@ def create_fixed_indices(
     validation_ratio: float,
     kmeans_sample_size: int,
     seed: int,
+    kmeans_sample_scope: str = "train",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     """Create deterministic validation and KMeans row sets shared by all runs."""
 
@@ -707,17 +729,34 @@ def create_fixed_indices(
     validation_mask = np.zeros(row_count, dtype=np.bool_)
     validation_mask[validation_indices] = True
     train_indices = np.flatnonzero(~validation_mask).astype(np.int64, copy=False)
-    sample_rows = min(kmeans_sample_size, len(train_indices))
-    initialization_rng = np.random.default_rng(seed)
-    initialization_indices = np.sort(
-        initialization_rng.choice(train_indices, size=sample_rows, replace=False)
-    ).astype(np.int64, copy=False)
+    if kmeans_sample_scope == "train":
+        initialization_pool = train_indices
+    elif kmeans_sample_scope == "all":
+        initialization_pool = np.arange(row_count, dtype=np.int64)
+    else:
+        raise RQVAETrainingError(
+            "kmeans_sample_scope 只能是 train 或 all"
+        )
+    sample_rows = min(kmeans_sample_size, len(initialization_pool))
+    if sample_rows == len(initialization_pool):
+        initialization_indices = initialization_pool.copy()
+        sampling_algorithm = "full_initialization_pool_in_row_order"
+    else:
+        initialization_rng = np.random.default_rng(seed)
+        initialization_indices = np.sort(
+            initialization_rng.choice(
+                initialization_pool, size=sample_rows, replace=False
+            )
+        ).astype(np.int64, copy=False)
+        sampling_algorithm = "numpy.default_rng(seed).choice_without_replacement"
     metadata = {
-        "algorithm": "numpy.default_rng(seed).choice_without_replacement",
+        "algorithm": sampling_algorithm,
         "seed": seed,
         "train_rows": int(len(train_indices)),
         "validation_rows": int(len(validation_indices)),
         "validation_indices_sha256": _sha256_indices(validation_indices),
+        "kmeans_sample_scope": kmeans_sample_scope,
+        "kmeans_sample_pool_rows": int(len(initialization_pool)),
         "kmeans_sample_rows": int(len(initialization_indices)),
         "kmeans_sample_indices_sha256": _sha256_indices(initialization_indices),
     }
@@ -830,7 +869,7 @@ def initialize_codebooks_kmeans(
     model: RQVAE,
     embeddings: np.ndarray,
     row_indices: np.ndarray,
-    config: RQVAETrainingConfig,
+    config: KMeansInitializationConfig,
     device: torch.device,
 ) -> list[dict[str, Any]]:
     """Initialize every residual codebook with sequential KMeans."""
@@ -845,7 +884,7 @@ def initialize_codebooks_kmeans(
     )
     residual = latent.copy()
     results: list[dict[str, Any]] = []
-    for level_index, codebook_size in enumerate(config.codebook_sizes):
+    for level_index, codebook_size in enumerate(model.codebook_sizes):
         started = time.perf_counter()
         if config.kmeans_backend == "sklearn":
             centroids, labels, mean_distance = _sklearn_kmeans(
@@ -1221,6 +1260,7 @@ def run_training(
         config.validation_ratio,
         config.kmeans_sample_size,
         config.seed,
+        config.kmeans_sample_scope,
     )
     split_metadata["monitor_subset"] = {
         "source": "validation_split",
@@ -1528,6 +1568,7 @@ def _config_from_payload(payload: dict[str, Any]) -> RQVAETrainingConfig:
     converted.setdefault("diversity_scale", 0.0)
     converted.setdefault("diversity_temperature", 0.5)
     converted.setdefault("diversity_start_epoch", 1)
+    converted.setdefault("kmeans_sample_scope", "train")
     return RQVAETrainingConfig(**converted)
 
 
@@ -1643,15 +1684,15 @@ def export_checkpoint_sid(
     sid_path = evaluation_dir / "sid_codes.npy"
     temporary_sid_path = evaluation_dir / ".sid_codes.npy.tmp"
     temporary_sid_path.unlink(missing_ok=True)
-    sid_codes = np.lib.format.open_memmap(
-        temporary_sid_path,
-        mode="w+",
-        dtype=np.int32,
-        shape=(row_count, len(config.codebook_sizes)),
-    )
     export_started = time.perf_counter()
     try:
-        with torch.no_grad():
+        # Stream NPY bytes instead of dirtying mmap pages on shared storage.
+        with temporary_sid_path.open("wb", buffering=8 * 1024 * 1024) as output, torch.no_grad():
+            np.lib.format.write_array_header_2_0(output, {
+                "descr": np.dtype(np.int32).str,
+                "fortran_order": False,
+                "shape": (row_count, len(config.codebook_sizes)),
+            })
             for start in tqdm(
                 range(0, row_count, export_batch_size),
                 desc="Export full SID",
@@ -1662,13 +1703,9 @@ def export_checkpoint_sid(
                 batch = np.asarray(embeddings[start:stop], dtype=np.float32)
                 inputs = torch.from_numpy(np.ascontiguousarray(batch)).to(device)
                 codes = model.encode_codes(inputs).cpu().numpy().astype(np.int32, copy=False)
-                sid_codes[start:stop] = codes
-        sid_codes.flush()
-        del sid_codes
+                output.write(codes.tobytes(order="C"))
         os.replace(temporary_sid_path, sid_path)
     finally:
-        if "sid_codes" in locals():
-            del sid_codes
         temporary_sid_path.unlink(missing_ok=True)
 
     full_rows = int(resolved["input_validation"]["full_rows"])

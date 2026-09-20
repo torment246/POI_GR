@@ -61,6 +61,16 @@ Follow these constraints for every task in `/ofs/map_search/hudan/poi_genret`.
 6. Recalculate and verify global batch size, process count, checkpoint/evaluation cadence, and output isolation whenever resource parameters change. Diff the new launcher against its reference so every unrelated change is intentional.
 7. Before handoff or launch, run `bash -n`, verify executable permission, resolve every referenced config/entrypoint/path, enforce the short `TMPDIR` gate above, and use the launcher's `--dry-run` or preflight mode when available. Syntax validation must not start training.
 
+## Prepare SFT inside the platform launcher by default
+
+The user's standing preference for this project is a single platform entry point that prepares SFT inputs and then starts training. Do not require the user to repeat this preference or finish full SFT preprocessing on the development server before handing over a launcher.
+
+1. Reuse the accepted upstream SID/identifier artifacts. Put all remaining SFT preparation into the platform entry point: method-specific message construction, vocabulary/model preparation when needed, full Train/Validation length preflight, packed cache construction, and final input validation. Use the current task's requested GPU count and frozen training protocol; this preference alone does not authorize starting a platform job.
+2. Run preparation once in a CPU driver with `CUDA_VISIBLE_DEVICES=''`, outside `torchrun`. Start distributed training only after preparation succeeds. Preserve user hashes, non-identifier inputs, splits, and the existing zero-truncation contract.
+3. Provide `--dry-run` for lightweight source/config checks and `--prepare-only` for preparation without training. Keep partial outputs distinguishable from completed artifacts; reuse completed stages only after checking their input fingerprints and output state. Log stages and exit codes, prevent concurrent preparation of the same output, and stop on mismatches or failures.
+4. Develop and validate code plus bounded smoke tests locally, then hand the platform launcher to the user. Report accurately which upstream artifacts are complete and which full data/cache gates will run on the platform.
+5. Reference examples: `qg_prqk/launchers/run_train_qg_prqk_a0_gid_sft_4gpu_3epoch.sh` with `qg_prqk/src/qg_prqk/sft/a0_gid_pipeline.py`, and `launchers/run_train_genpoi_active716k_centered_512x3_4x6000d_3epoch.sh` with `src/poi_gr/methods/genpoi/active_sft.py`. Copy the applicable launcher skeleton while following the authentication-handling rules above.
+
 ## Validate and record
 
 1. Monitor logs, process status, GPU utilization, and OOM signals. Communicate at least once per minute while a job is actively being supervised.

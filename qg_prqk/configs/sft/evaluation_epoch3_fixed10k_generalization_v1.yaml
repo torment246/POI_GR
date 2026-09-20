@@ -1,0 +1,38 @@
+schema_version: qg-prqk-sft-evaluation-suite-v1
+# 只对齐现有 Validation；不重新抽样、不读取 Test、不选择 checkpoint。
+split: valid
+date: '2026-07-13'
+source_rows: 597421
+subset_size: 10000
+tokenizer: qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1
+output_root: qg_prqk/outputs/eval/sft_epoch3_fixed10k_generalization_v1
+fixed_reference: outputs/eval/legal_path_fixed10k_v1/tiger_e3/validation_subset_10000.jsonl
+fixed_manifest_sha256: 7acfd5c3852704a885b53a0facc1320e2ab923fb2dfca783a6bf0e047ffedd39
+generalization_dir: outputs/eval/generalization_validation_suite_10k_v1
+generalization_manifest_sha256: d274413e82dd175f28e0510146c2d1a46213f6f1b553d19094a1efa6ac601539
+decoding:
+  mode: unconstrained
+  num_beams: 10
+  cutoff_len: 1024
+  batch_size: 32
+  chunk_size: 500
+  length_penalty: 1.0
+  early_stopping: true
+  renormalize_logits: true
+variants:
+  a4_gid_parent:
+    data_dir: qg_prqk/outputs/sft_data/a4_gid_parent_order_a_history10_v1
+    data_manifest_sha256: c05810df785952b5e4412d4e67d31324587e2e02fb940ebb005331d9ea09e114
+    identifier_dir: qg_prqk/outputs/final_identifiers/a4_gid_parent_order_a_v1
+    identifier_manifest_sha256: 7c87a9d7e1c94874ad4ebf8fd61504f0bd52176e48f6c20ad88a5f72af9e5b86
+    checkpoint: qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949
+    expected_step: 8949
+    max_new_tokens: 13
+  a4_nogid:
+    data_dir: qg_prqk/outputs/sft_data/a4_nogid_sid3_history10_v1
+    data_manifest_sha256: b173fe1411b6043727bd138a88b93bb9456b2bff89522d1c46b75e6304d21e65
+    identifier_dir: qg_prqk/outputs/final_identifiers/a4_nogid_sid3_v1
+    identifier_manifest_sha256: 794a6069585b0f8c81fd5ddc646a2be82f4be2667816b060c4ba6dd5436309d8
+    checkpoint: qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404
+    expected_step: 7404
+    max_new_tokens: 7

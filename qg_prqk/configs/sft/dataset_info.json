@@ -1,0 +1,58 @@
+{
+  "qg_prqk_a4_gid_parent_history10_v1_train": {
+    "file_name": "../../outputs/sft_data/a4_gid_parent_order_a_history10_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "qg_prqk_a4_gid_parent_history10_v1_valid": {
+    "file_name": "../../outputs/sft_data/a4_gid_parent_order_a_history10_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "qg_prqk_a4_nogid_history10_v1_train": {
+    "file_name": "../../outputs/sft_data/a4_nogid_sid3_history10_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "qg_prqk_a4_nogid_history10_v1_valid": {
+    "file_name": "../../outputs/sft_data/a4_nogid_sid3_history10_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  }
+}

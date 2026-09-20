@@ -36,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True, help="不存在的输出目录。")
     parser.add_argument("--expected-rows", type=int, help="可选的 BGE 全量行数门禁。")
     parser.add_argument("--max-rows", type=int, help="仅用于合成 smoke 的输出行数上限。")
+    parser.add_argument("--allow-feature-superset", action="store_true",
+                        help="按向量 POI 子集复用全库静态特征；保留原词表，要求全部匹配且无重复。")
     return parser.parse_args()
 
 
@@ -52,6 +54,7 @@ def main() -> int:
             output_dir=_resolve(args.output_dir),
             expected_rows=args.expected_rows,
             max_rows=args.max_rows,
+            allow_feature_superset=args.allow_feature_superset,
         )
     except (GnprContentGeoError, OSError, RuntimeError, ValueError) as error:
         print(f"GNPR content-geo 输入构建失败：{error}", file=sys.stderr)

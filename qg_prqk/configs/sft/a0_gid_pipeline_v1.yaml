@@ -1,0 +1,23 @@
+schema_version: qg-prqk-a0-gid-platform-pipeline-v1
+variant: a0_gid
+training_config: qg_prqk/configs/sft/a0_gid_history10_v1.yaml
+reference_training_config: qg_prqk/configs/sft/a4_gid_parent_history10_v1.yaml
+poi_ids: qg_prqk/outputs/inputs/beijing_poi_active_bge_m3_v1/poi_ids.jsonl
+rows: {poi: 716245, train: 7586410, valid: 597421}
+sources:
+  a0_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/manifest.json
+    sha256: ec84eb8fa2c1c65059caab1de94d43095d82048c25310564e6950ab0a244789e
+  a4_identifier_manifest:
+    path: qg_prqk/outputs/final_identifiers/a4_gid_parent_order_a_v1/manifest.json
+    sha256: 7c87a9d7e1c94874ad4ebf8fd61504f0bd52176e48f6c20ad88a5f72af9e5b86
+  a4_data_manifest:
+    path: qg_prqk/outputs/sft_data/a4_gid_parent_order_a_history10_v1/manifest.json
+    sha256: c05810df785952b5e4412d4e67d31324587e2e02fb940ebb005331d9ea09e114
+  shared_token_mapping:
+    path: qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/qg_prqk_token_mapping.json
+    sha256: ced19fd4025662e0faabc3e8f032c1b89e3bc28bfba64c6402bfff3ad41f9d1b
+final_id_dir: qg_prqk/outputs/final_identifiers/a0_gid_order_a_v1
+run_control_dir: qg_prqk/outputs/run_control/sft_a0_gid_history10_v1_gpu4_e3
+tmp_dir: qg_prqk/outputs/tmp/qgsa0
+cache: {scan_batch_size: 4096, workers: 16, preprocessing_batch_size: 1000}

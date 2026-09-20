@@ -19,6 +19,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from poi_gr.methods.gnpr.content_geo import (  # noqa: E402
+    GnprContentGeoError,
     GnprContentGeoWeights,
     fuse_content_geo_batch,
     load_content_geo_artifact,
@@ -153,6 +154,29 @@ class GnprContentGeoTest(unittest.TestCase):
             result = model(fused)
             self.assertTrue(torch.isfinite(result.total_loss))
             self.assertEqual(tuple(result.codes.shape), (3, 3))
+
+            # Active rows may be a reordered subset; retain the original vocab.
+            pq.write_table(pa.Table.from_pylist([
+                {"poi_id": "inactive", "category_index": 0, "region_index": 0},
+            ]), feature_dir / "poi_features.parquet" / "part-00001.parquet")
+            with self.assertRaisesRegex(GnprContentGeoError, "行数"):
+                prepare_content_geo_metadata(embedding_dir=embedding_dir,
+                    feature_dir=feature_dir, output_dir=root / "rejected")
+            subset = prepare_content_geo_metadata(embedding_dir=embedding_dir,
+                feature_dir=feature_dir, output_dir=root / "subset",
+                allow_feature_superset=True)
+            self.assertEqual(subset["catalog_filter"], "embedding_poi_ids")
+            self.assertEqual(subset["stats"]["source_feature_rows"], 4)
+            self.assertEqual(subset["dimensions"], manifest["dimensions"])
+            _, _, subset_cat, subset_geo = load_content_geo_artifact(root / "subset")
+            np.testing.assert_array_equal(subset_cat, categories)
+            np.testing.assert_array_equal(subset_geo, regions)
+            (embedding_dir / "poi_ids.jsonl").write_text(
+                '"poi-b"\n"missing"\n"poi-a"\n', encoding="utf-8")
+            with self.assertRaisesRegex(GnprContentGeoError, "缺少静态特征"):
+                prepare_content_geo_metadata(embedding_dir=embedding_dir,
+                    feature_dir=feature_dir, output_dir=root / "missing",
+                    allow_feature_superset=True)
 
     def test_generic_training_and_export_use_lazy_fused_batches(self) -> None:
         import pyarrow as pa

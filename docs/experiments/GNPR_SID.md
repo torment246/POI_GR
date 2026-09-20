@@ -4,6 +4,72 @@
 
 ## 当前结论
 
+- 2026-09-14：按用户确认沿用旧 content-geo 适配，开始 active 716,245 POI 的 512×3 重建。新 SFT 从 active TIGER 逐条替换标识，保留 2,000 桶用户哈希；不沿用旧 GNPR 的无用户输入。详见 `EXP-20260914-02`。
+- 2026-09-16：active GNPR 四卡三轮 SFT 已完成，epoch 3 为 `checkpoint-7377`，Validation Loss 为 0.404873。平台显示 failed 是训练后的 checkpoint 索引后处理未执行，五项生成评测尚未启动；索引已补建，共享训练入口和三个 active 一键脚本已做永久修复。单卡 A100 串行评测入口已通过真实输入 dry-run，详见 `EXP-20260916-01`。
+- 2026-09-16：active GNPR epoch 3 的固定 10k 与四类泛化 10k 已全部完成。固定集 HR@1/HR@10/NDCG@10 为 48.65%/82.00%/66.2168%，四类泛化宏平均为 18.2700%/37.1100%/27.3832%；均低于同口径 active TIGER-BGE。详见 `EXP-20260916-02`。
+
+## EXP-20260914-02：active GNPR content-geo SID 与 TIGER 对齐的 SFT 准备
+
+- 状态：RQ-VAE 20 epoch、全量导出、条件去重、三份全量 SFT Messages、fresh 扩词与 1024 packed cache 均已完成；`sid.exit=0`、`export.exit=0`、`prepare.exit=0`。SID 训练耗时 1089.48 秒，准备任务于 2026-09-14 21:09（北京时间）成功退出。2026-09-15 接续核验时尚无正式 SFT checkpoint 或检索评测结果。
+- 目标：只缩小目录并重新学习 GNPR 码本；与 active TIGER 比较时，除标识外不改变 SFT 输入、样本量与划分。
+- 数据：`beijing_poi_active_order14d_history10_20260715_json`，716,245 POI；复用 `outputs/embeddings/beijing_poi_active_order14d_history10_bge_m3` 的 1024 维 BGE 向量，不重新编码。POI 行序 SHA256 为 `8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81`。
+- 特征：按 POI ID 从旧 `history10_pluscode6_top10_v1` 静态表匹配类别与 PlusCode6，716,245 条全部匹配，无非法索引。保留旧 402/766 词表槽位和 2192 总维，权重为 1/0.25/0.25；不使用行为、用户或 Query 特征构建 SID。
+- 配置：`configs/sid/rqvae_gnpr_content_geo_active_716k_512x3.yaml`；512×3、20 epoch、第 7 epoch 启用 diversity，λ=0.25、scale=0.05。初始化与 active TIGER 一样为全部 716,245 POI，区别于旧 GNPR 的 500k 初始化样本。
+- 代码与环境：未提交工作树，保留已有修改；poi-gr Python，服务器单张 RTX A6000 48GB 构建 SID，正式 SFT 留给用户在四卡平台启动。
+- 命令：`python scripts/gnpr/prepare_content_geo_inputs.py --embedding-dir outputs/embeddings/beijing_poi_active_order14d_history10_bge_m3 --feature-dir outputs/embeddings/gnpr_sid/history10_pluscode6_top10_v1 --output-dir outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_active716k_v1 --expected-rows 716245 --allow-feature-superset`；随后 `python scripts/sid/train_rqvae.py --config configs/sid/rqvae_gnpr_content_geo_active_716k_512x3.yaml --experiment GNPR-ACTIVE716K-BGE-M3-512x3-FULLINIT --no-progress`。
+- 产物：紧凑输入在 `outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_active716k_v1`；SID 在 `outputs/sid/gnpr_sid/bge_m3_category_pluscode6_active716k_v1/GNPR-ACTIVE716K-BGE-M3-512x3-FULLINIT`；运行日志在 `outputs/run_control/gnpr_active716k`。
+- 下一步：在四卡平台使用既有启动脚本运行三轮 SFT，再执行 epoch 3 的固定 10k 与四类泛化无约束评测。尚无下游指标，不根据 SID 唯一率宣称检索提升。
+- 核验：3 项 content-geo 合成测试通过（包含训练与导出）；62 项标识、数据对齐、动态 Dedup 评测、词表及训练配置/恢复测试通过。宿主机项目内短 TMPDIR 的 AF_UNIX Listener 探针通过。旧 GNPR 评测的 223 Dedup 常量已改为按新 identifier/tokenizer 动态读取，历史默认仍兼容。
+- 全量 SID：716,245 条，614,296 个不同三层 SID，`distinct_sid_count / poi_count = 85.7662%`；554,681 个单例 POI（77.4429%），161,564 个碰撞 POI（22.5571%），59,615 个碰撞桶，最大桶 261。第一层实际使用 323/512 个码字；静态指标不等同于下游检索提升，且最大桶仍大于 active TIGER 的 152。
+- 条件去重：单例三 token，碰撞四 token，Dedup 为 `<d_0>…<d_260>`；716,245 个最终标识 100% 唯一，映射 SHA256 为 `14c82fd6ac8ef94b86c599b9d1e5f9cc55828e7c36ebe257929c75bce77eeb23`，在实验目录 `gnpr_ids/epoch_20/`。所有负哨兵 `-1` 仅留在内部数组，不注册或生成 `<d_-1>`。
+- 真实评测入口兼容核验：使用新 GNPR evaluator 的 index 对全部 716,245 行做正反向索引验证，通过；最大 `d_260` 和单例目标的解析与 POI 行号回查均通过。三层实际使用码字数为 323/390/333，不宣称码本满利用。
+- SFT 实施：`scripts/gnpr/build_aligned_sft_data.py` 流式读取 active TIGER 的 Train/Valid/Test，历史经旧 TIGER ID→POI→新 GNPR ID 回查，目标先检查旧 ID 与 `target_poi_id` 一致再替换。仅将历史标识包装改为 `<POI_GNPR_ID>`、编码改为 `<a_i><b_j><c_k>[<d_n>]`，其余输入逐行比较；原 `<U_XXXX>` 原样复制，不重新哈希。输出目录为 `data/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/`。
+- 平台入口：`launchers/run_train_gnpr_active716k_512x3_4x6000d_3epoch.sh`，从 active TIGER 四卡入口派生，保留 OFS/poi-gr 环境与认证初始化；`8×16×4=512` 全局 batch，BF16、cutoff 1024、3 epoch、LR 5e-5，与 active TIGER SFT 配置除产物路径外完全一致。支持 `--dry-run`、`--resume`、`--skip-training`、`--skip-eval`；训练后仅评 epoch 3，固定 10k 与四类泛化均用 GNPR 原无约束 Beam=10 协议，不新增 Trie。
+- 后台衔接：`outputs/run_control/gnpr_active716k/prepare.log` 依次记录去重、全量 Messages、fresh 扩词、完整 Train/Valid 长度预检与缓存；`prepare.exit=0` 及正式 `cache_manifest.json` 是准备完成的必要门禁，不能在缓存尚未完成时提交正式训练。Test 只替换 SID，不进入 tokenizer 长度统计、packing、SFT 或 Validation 选模。
+- Messages 验收：Train/Valid/Test 为 7,586,410/597,421/606,682，共 8,790,513 条；历史事件总数 43,208,167，历史覆盖率 72.0156605%，每条平均 4.915318。完整源文件 SHA256 校验通过，逐条非 SID 输入差异 0、用户哈希差异 0；Token 清单共 3,845 个，包含完整 2,000 用户桶。
+- SFT manifest SHA256：`0800639b75215cc1f7551dbcf3c72ece1e25b1e25df12475432277f8efaba3be`。Train/Valid/Test 输出 SHA256 分别为 `3fda8279adce33fba28a78856ca891f9502f9285f9585a9c7a43a418a201264d` / `1f51019ffa911f3701106058b9f76545ddc82fe49e30b91548af18ead84cdb71` / `673157f770598509a4ce4bbefbe9c5903b5f0a108d45e03f8e676eaa3d6a5b4b`。
+- fresh 扩词完成：`models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/`，从原始 Qwen3-0.6B 扩展，未加载 TIGER 或旧 GNPR 的 SFT 权重。词表 151,669→155,514，新增 3,845 个普通原子 token；extended tokenizer 指纹为 `9ff1a07c3b5f434e038561faea4fb9dd6daab39d76ee131450bcd9e4e88edaea`。
+- 完整 Train/Valid Token 预检已通过，扫描 7,586,410+597,421 行，最大完整序列 946，超过 1024 行数 0，目标截断 0。无需删除历史事件或更改 Query。预检状态在 `data/sft/tokenized/.gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.preflight.json`；packed cache 已完成，Train/Validation 为 1,258,621/94,118 条，smoke 为 1,658/314 条，`cache_manifest.json` 与准备日志一致。
+- 新模型真实输入预检通过：GNPR evaluator 正确编码 100 条 Valid 并回查目标 POI，Prompt 中包含各自的用户 token；全部 2,000 个 `<U_XXXX>` 的实际 Token ID 与 active TIGER 相等。该检查不加载训练后权重、不运行生成指标，不算正式 SFT 或评测结果。
+
+- 2026-09-15 接续核验：使用 `datasets.load_from_disk` 重载正式缓存，Train/Validation 行数与 manifest 一致；各 split 首/中/末样本均为 1024 长度且含有效监督标签，缓存目录约 27.15 GiB。启动脚本可执行且 `bash -n` 通过；单独执行脚本内真实输入合同校验，退出码为 0，推导每轮 2,459 step、三轮 7,377 step。开发机未发现 Active GNPR 训练进程，共享目录未发现对应 SFT checkpoint 或评测结果；本次没有启动训练。
+
+## EXP-20260916-01：active GNPR 三轮 SFT 完成与后处理失败修复
+
+- 状态：SFT 训练成功，平台任务曾在训练后的评测门禁处失败；当时五项生成评测没有启动。三个 epoch checkpoint 全部可用，索引与根因均已修复；后续评测已在 `EXP-20260916-02` 完成，没有重训。
+- 数据与配置：沿用 `EXP-20260914-02` 的 active 716,245 POI、配对 Train/Valid、fresh GNPR 词表和 cutoff 1024 packed Cache；四卡 RTX PRO 6000D、BF16、单卡 batch 8、累积 16、global batch 512、3 epoch、seed 42。代码基线仍为 `54802e6674e283722ecee00fb862530df30cef9a` 加未提交工作树。
+- 训练结果：共 7,377 step，耗时 51,288.52 秒（14:14:48）；Train Loss 0.654440。epoch 1/2/3 分别为 `checkpoint-2459/4918/7377`，Validation Loss 为 0.559589/0.421840/0.404873。三个 checkpoint 均包含模型、优化器、调度器、Trainer 状态和四卡 RNG 状态；epoch 3 模型 SHA256 为 `b9b7e28013abc71d754b33e5f4bd4519ee36abf051961a0fda44231b1bb499d7`。
+- 失败边界：`train_console.log` 明确记录 `Training completed`、最终模型保存和正常 NCCL 销毁，训练于 2026-09-16 11:29（北京时间）结束。随后没有建立 active GNPR 评测目录，也没有任何候选分片或检索指标，说明失败发生在评测启动之前。
+- 根因：LLaMA-Factory 多卡 `launcher.launch()` 成功时以 `SystemExit(0)` 结束；外层 `scripts/sft/train.py` 原先只处理普通返回，因此成功训练后没有执行 `write_epoch_checkpoint_index()`。一键脚本随后把缺少派生文件 `epoch_checkpoints.json` 当作致命错误并退出。active BGE/MMBERT 曾发生同一问题，当时只补建了结果索引，没有修复共享控制流，因此本次再次触发。
+- 修复：共享训练入口现在只把 `SystemExit(None/0)` 转为成功返回，非零退出保持失败，随后一定执行 epoch 索引构建。索引构建增加 checkpoint 模型/config/Trainer 状态完整性、目录 step 与 `global_step` 一致性、epoch 1..N 完整性和原子发布校验。GNPR、active BGE TIGER、active MMBERT 三个一键脚本在评测门禁处均从实际 checkpoint 重新生成并验证索引，不再依赖遗失的旧索引；QG-PRQK 的两个直接多卡入口也同步处理成功 `SystemExit(0)`。
+- 恢复产物：已从三个正式 checkpoint 生成 `epoch_checkpoints.json`，对应 `(1,2459)/(2,4918)/(3,7377)`，SHA256 为 `51977f6de84d7ed3b3733d56bc62426ca47c2a9d5f06a3a674a02724b0ef9e8c`。本次没有改动模型权重或训练状态。
+- 验证：共享训练入口 30 项测试通过，覆盖成功退出继续后处理、非零退出传播、checkpoint step 错配拒绝；QG-PRQK 相关 19 项测试通过。三个 active launcher 均通过 `bash -n`；GNPR `--dry-run --skip-training` 已通过真实数据/缓存合同并展开固定 10k 与四类泛化 10k 的五条 epoch-3 评测命令。
+- 评测恢复入口：`launchers/run_evaluate_gnpr_active716k_epoch3_1xa100.sh` 固定复用 `checkpoint-7377`，在单张 A100 上按固定 10k、已见 Query/未见配对、未见 Query/已见目标、长尾目标、冷目标的顺序串行执行。五项均为无约束 Beam=10、batch 32、cutoff 1024、无 Trie；每 1,000 条原子保存进度，完整单元会自动跳过，最后生成 `epoch3_evaluation_summary.json`。脚本的 checkpoint、Tokenizer、identifier 与五份真实输入合同及 `--dry-run` 均已通过。
+- 后续状态：单卡 A100 入口已完成五项正式评测，结果记录在 `EXP-20260916-02`；该入口继续保留用于断点恢复和结果合同复核。
+
+## EXP-20260916-02：active GNPR epoch 3 固定与泛化 Validation 评测
+
+- 状态：五项正式评测均为 `completed`，各覆盖 10,000 条；固定使用 `checkpoint-7377`、单张 A100、BF16、无约束 Beam=10、batch 32、cutoff 1024，不使用 Trie 或地理剪枝，Test 未读取。
+- 固定随机 Validation 10k 的 HR@1/3/5/10 为 48.65%/71.55%/77.79%/82.00%，NDCG@1/3/5/10 为 48.65%/62.2525%/64.8242%/66.2168%，Valid ID Rate 为 71.0200%。
+
+| Validation 集合 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID Rate |
+|---|---:|---:|---:|---:|---:|---:|
+| 固定随机 10k | 48.65% | 71.55% | 77.79% | 82.00% | 66.2168% | 71.0200% |
+| 已见 Query / 未见配对 | 16.11% | 33.88% | 41.91% | 50.58% | 32.5535% | 68.8140% |
+| 未见 Query / 已见目标 | 40.85% | 56.55% | 61.54% | 65.52% | 53.4528% | 54.2200% |
+| 长尾目标（Train 1—5） | 12.38% | 18.81% | 22.50% | 27.13% | 19.1463% | 46.4140% |
+| 冷目标（Train 0） | 3.74% | 4.23% | 4.64% | 5.21% | 4.3801% | 41.4940% |
+| 四类泛化宏平均 | 18.2700% | 28.3675% | 32.6475% | 37.1100% | 27.3832% | 52.7355% |
+
+- 与 active TIGER-BGE 的同口径无约束结果相比，GNPR 固定集 HR@1/HR@10/NDCG@10 低 1.13/2.51/1.8328pp；四类泛化宏平均低 1.8550/5.1550/3.3157pp。泛化差距主要来自长尾目标，HR@10 低 9.45pp；冷目标 HR@10 也低 4.27pp。
+- 与 active TIGER-MMBERT 相比，GNPR 固定集 HR@1/HR@10/NDCG@10 低 0.81/2.04/1.4692pp，四类泛化宏平均低 3.93/7.3725/5.6340pp。GNPR 在部分集合有更高 Valid ID Rate，但没有转化为更高召回，说明目录合法率不是当前泛化差距的充分解释。
+- 非法候选仍以 `identifier_not_in_corpus` 为主。固定集非法候选率为 28.98%；长尾与冷目标升至 53.586%/58.506%，对应 95.66%/97.17% 的样本至少包含一个非法候选。静态三层 SID 的 distinct/N=85.7662% 与最终唯一标识 100% 没有解决 Query 到合法路径的生成难度。
+- 五项纯推理共 3,380.76 秒（56.35 分钟），吞吐 14.11—15.70 条/秒，实际 batch 始终为 32，峰值显存 27.76 GiB，未发生 OOM 降 batch。
+- 结论：active 目录缩小后，GNPR 固定集已接近 active TIGER，但仍未超过；在新配对、长尾与冷目标上退化更明显。结果继续支持旧全库诊断：GNPR 的高静态唯一率主要减少碰撞，不能替代由 Query 易预测的粗层语义组织。
+- 正式汇总位于 `outputs/eval/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/epoch3_evaluation_summary.json`，SHA256 为 `6ba88ef44f51c0af4aaebbf425fa31040a15c9b7ea4fd46ab9d66243b4b08f9b`。
+
+## 历史全库结论（保持原记录）
+
 - 8192 用户哈希行为版已完成 703,306 条交互 POI 的三容量训练，但最大碰撞桶由用户哈希别名主导，只保留为消融和失败审计，不冻结为下游标识。
 - 全量 content-geo 输入覆盖 2,337,178 条 POI；特征权重固定为 `1/0.25/0.25`，避免类别和区域稀疏块主导重构。
 - GNPR 发布代码实际启用的 utilization diversity loss 已接入，`λ=0.25`、内部 scale `0.05`，20 epoch 适配为第 7 轮起启用；未配置该项的 V1/TIGER/GenPOI 行为保持不变。
@@ -609,3 +675,7 @@ python scripts/gnpr/evaluate_retrieval.py \
 - 四组宏平均 HR@1/HR@10/NDCG@10 为 19.0725%/37.7675%/28.2409%，分别比 TIGER 低 5.92/13.6025/9.4540pp。GNPR 在冷目标上的 HR@10 只有 4.27%，高静态唯一率没有转化为长尾或冷启动检索能力。
 - 事后真实 Token 审计的超 512 行数为 `0/8/5/5`，最大总长度为 `476/622/579/545`；单组指标理论最大扰动不超过 0.08pp，远小于与 TIGER 的差距。结果保留为历史 512 口径。
 - 正式产物位于 `outputs/eval/generalization_validation_suite_10k_v1/paper_baselines/<subset>/gnpr_e3/`。结论与逐层诊断一致：GNPR 的根前缀 Query 可预测性不足，并未因目录唯一率优势改善泛化。
+
+### 2026-09-18：active 全量 Test 四模型对照验收
+
+GNPR 无约束 HR@1/HR@10/NDCG@10 为 49.0443%/82.3832%/66.5933%，候选合法率 71.0600%；本次四模型中最低。 同一 2026-07-14 Test 共 606,682 条、epoch 3、Beam 10、cutoff 1024；正式任务及父脚本退出 0。完整跨方法记录统一见 [EXP-20260917-03](../../qg_prqk/docs/experiments/QG_PRQK.md#exp-20260917-03active-四模型全量-test-评测)。

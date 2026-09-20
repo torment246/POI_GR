@@ -1,0 +1,11 @@
+schema_version: qg-prqk-constrained-evaluation-v1
+# 只新增全目录合法前缀约束；模型、数据和其他生成参数继承已完成的无约束计划。
+output_root: qg_prqk/outputs/eval/sft_epoch3_constrained_fixed10k_generalization_v1
+run_control: qg_prqk/outputs/run_control/eval_a4_dual_epoch3_constrained_2x6000d
+reference_plans:
+  a4_gid_parent:
+    path: qg_prqk/outputs/eval/sft_epoch3_fixed10k_generalization_v1/a4_gid_parent/plan_2x6000d.json
+    sha256: 588034f900bec85e7f4496f593275c0e0c719fb83fa8ee245dd70ab357adf8f1
+  a4_nogid:
+    path: qg_prqk/outputs/eval/sft_epoch3_fixed10k_generalization_v1/a4_nogid/plan_2x6000d.json
+    sha256: f1d596d7fd47149568d01a87c3b40805476cdcc2bc3f68f339f51dc2283f6c3e

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import sys
+import json
+import tempfile
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -21,6 +24,7 @@ from poi_gr.pid.trie import (  # noqa: E402
     TriePrefilledPrefixConstraint,
     TriePrefixConstraint,
     build_compact_trie_arrays,
+    load_pid_token_ids,
 )
 
 
@@ -59,6 +63,17 @@ class CompactPidTrieTest(unittest.TestCase):
         result.append(self.tokens.eos)
         return result
 
+    def sid_gid_path(self, row: int) -> list[int]:
+        codes = self.codes[row]
+        result = [
+            int(self.tokens.sid[level][codes[level + 6]]) for level in range(3)
+        ]
+        result.extend(int(self.tokens.gid[codes[index]]) for index in range(6))
+        if codes[9] >= 0:
+            result.append(int(self.tokens.dedup[codes[9]]))
+        result.append(self.tokens.eos)
+        return result
+
     def test_singleton_allows_only_eos_after_s3(self) -> None:
         prefix = self.path(0)[:-1]
         self.assertEqual(self.trie.children(self.trie.traverse(prefix)).tolist(), [99])
@@ -90,6 +105,25 @@ class CompactPidTrieTest(unittest.TestCase):
         rows = [self.trie.lookup(self.path(index)) for index in range(len(self.codes))]
         self.assertEqual(rows, list(range(len(self.codes))))
         self.assertEqual(len(set(rows)), len(rows))
+
+    def test_sid_gid_order_builds_reordered_unique_paths(self) -> None:
+        trie = CompactPidTrie(
+            **build_compact_trie_arrays(
+                self.codes,
+                self.tokens,
+                pid_order="sid_gid",
+            )
+        )
+        rows = [trie.lookup(self.sid_gid_path(index)) for index in range(len(self.codes))]
+        self.assertEqual(rows, list(range(len(self.codes))))
+        self.assertEqual(
+            trie.children(0).tolist(),
+            sorted({int(self.tokens.sid[0][row[6]]) for row in self.codes}),
+        )
+
+    def test_unknown_pid_order_is_rejected(self) -> None:
+        with self.assertRaisesRegex(PidTrieError, "PID 顺序"):
+            build_compact_trie_arrays(self.codes, self.tokens, pid_order="unknown")
 
     def test_duplicate_final_pid_is_rejected(self) -> None:
         duplicated = np.concatenate((self.codes, self.codes[[0]]), axis=0)
@@ -146,3 +180,29 @@ class CompactPidTrieTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActivePidTokenTest(unittest.TestCase):
+    def test_512_vocab_and_missing_token_gate(self):
+        tokens = [*(f"<G_{c}>" for c in "0123456789bcdefghjkmnpqrstuvwxyz"),
+                  *(f"<S{level}_{i}>" for level in (1, 2, 3) for i in range(512)),
+                  *(f"<D_{i}>" for i in range(512))]
+        mapping = {t: i + 100 for i, t in enumerate(tokens)}
+        class Tokenizer:
+            eos_token_id = 99
+            def __len__(self): return 100 + len(mapping)
+            def convert_tokens_to_ids(self, token): return mapping[token]
+            def encode(self, token, **kwargs): return [mapping[token]]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tokenizer.json").write_text("{}")
+            path = root / "poi_token_mapping.json"
+            path.write_text(json.dumps({"tokens": mapping, "new_vocab_size": len(Tokenizer())}))
+            with patch("poi_gr.pid.trie.AutoTokenizer.from_pretrained", return_value=Tokenizer()):
+                ids, meta = load_pid_token_ids(root)
+                self.assertEqual([len(v) for v in ids.sid], [512] * 3)
+                self.assertEqual(meta["pid_token_count"], 32 + 1536 + 512)
+                del mapping["<S1_7>"]
+                path.write_text(json.dumps({"tokens": mapping, "new_vocab_size": len(Tokenizer())}))
+                with self.assertRaises(PidTrieError):
+                    load_pid_token_ids(root)

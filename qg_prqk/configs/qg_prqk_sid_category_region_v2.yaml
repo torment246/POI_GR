@@ -1,0 +1,19 @@
+schema_version: qg-prqk-sid-category-region-v2
+# 只复用已冻结的来源路径，不复用旧版按热门 code 抽样的绘图口径。
+source_config: qg_prqk/configs/qg_prqk_sid_visualization_a0_a4_nogid_full_v1.yaml
+source_config_sha256: 9a34b1854c250974d698626fc26df6dbedd75772682e26e33b2b5478dde9e7b0
+output_dir: qg_prqk/outputs/figures/qg_prqk_sid_category_region_v2
+font_path: qg_prqk/outputs/inputs/fonts/NotoSansCJKsc-Regular.otf
+seed: 42
+categories: [房产小区, 室内及附属设施, 美食, 购物, 生活服务]
+rows_per_category: 200
+geohash_precision: 5
+prefix_top_k: 3
+projection:
+  representation: concatenate_unit_poi_codewords_equal_level_weight
+  fit_scope: joint_three_methods_same_poi
+  pca_components: 50
+  perplexity: 30.0
+  max_iter: 1000
+  cpu_threads: 8
+  dpi: 160

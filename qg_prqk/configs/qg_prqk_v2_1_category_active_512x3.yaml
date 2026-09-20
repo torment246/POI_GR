@@ -1,0 +1,33 @@
+schema_version: qg-prqk-downstream-config-v2.1
+
+# 只改变下游 SID 容量；已完成阶段的配置、目录和哈希保持不变。
+base_p3a_full_config: qg_prqk_p3a_full_active_1024x3_v1.yaml
+base_p3a_full_config_sha256: 4e5c9f4d2a7dd5069b5b2ff3497b1a834a0f00e4e494bf1617b1ba49ce582ba6
+base_category_config_sha256: 4c35982287cfd4c4ad7a52160bce6e8878f391405c11110ace037c4358ae7cae
+
+downstream:
+  codebook_sizes: [512, 512, 512]
+  output_dir: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active
+  stop_after_phase: P8-CAT
+  query_view_policy:
+    D1: raw_bge
+    D2: raw_bge
+    D3: final_adapter
+
+# 下列产物不依赖 SID 容量，直接只读复用，不迁移、不重新计算。
+upstream_artifacts:
+  p2_5_manifest:
+    path: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_depth/manifest.json
+    sha256: 5f203b94d567433f89ff25a7755516b211544b9be2c484ac28e2243ccd7ce55f
+  d3_query_cache_manifest:
+    path: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_cache_exact_full/manifest.json
+    sha256: a6e27c086f5ad6d13e771b03b40568062a873c2389df5c38a7e5e75027772bfc
+  p3a_full_manifest:
+    path: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_adapter_exact_full/manifest.json
+    sha256: 63f6d82126ec80a9fb1208496c04eb1732ccd27d17ce7551f61b7f9972c92f0e
+  final_adapter_manifest:
+    path: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_adapter_exact_full/final/manifest.json
+    sha256: 5254243750a06cf46b60657007894f06f933219c524401e4b28ffc97fc9165cc
+  final_adapter_checkpoint:
+    path: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_adapter_exact_full/final/query_adapter_exact_final.pt
+    sha256: dcbbebf9099baf2bb21411855749da51943cd4be1f0456abfc1c926905027308

@@ -1,0 +1,12 @@
+# A0 epoch-3 全量 Test；读取冻结 A4 Test 并只替换标识，不改原数据。
+schema_version: qg-prqk-a0-full-test-v1
+split: test
+date: '2026-07-14'
+source_rows: 606682
+a0_protocol: qg_prqk/configs/sft/evaluation_a0_gid_epoch3_dual_decode_v1.yaml
+a0_protocol_sha256: 9e9a383fbefc0acbbe3b71e3d64aefb0e028a4a13517358d32ca436415e8b5a8
+reference_test_protocol: qg_prqk/configs/sft/evaluation_epoch3_full_test_20260714_v1.yaml
+reference_test_protocol_sha256: e35f6757184d95a8284be2351ae90bb930b824fb9742c2bb7cf3c94c268c9389
+checkpoint_sha256: 282ac677f0962f65e5f691dbeff10d4d5f3459bbeb0924f36287db30283d716a
+output_root: qg_prqk/outputs/eval/a0_gid_epoch3_full_test_20260714_dual_decode_v1
+run_control: qg_prqk/outputs/run_control/eval_a0_gid_full_test_dual_decode_v1

@@ -1,0 +1,200 @@
+schema_version: qg-prqk-config-v1
+
+project:
+  method: qg_prqk
+  version: v1.1
+  city: 北京
+  seed: 42
+  codebook_sizes: [1024, 1024, 1024]
+
+paths:
+  project_root: ../..
+  poi_catalog: data/beijing_poi_clean_20260715_json
+  poi_embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  embedding_manifest: outputs/embeddings/beijing_poi_bge_m3/manifest.json
+  sft_data_dir: data/sft/beijing_order_main_v1
+  sft_manifest: data/sft/beijing_order_main_v1/manifest.json
+  output_root: qg_prqk/outputs
+  output_dir: qg_prqk/outputs/qg_prqk_1024x3_v1_1
+
+data_contracts:
+  expected_poi_rows: 2337178
+  embedding_dim: 1024
+  embedding_dtype: float16
+  embedding_normalized: true
+  pca: null
+  poi_catalog_fields:
+    - address
+    - alias
+    - area
+    - category
+    - category_code
+    - city
+    - click_score
+    - displayname
+    - lat
+    - layer
+    - lng
+    - poi_id
+    - source_dt
+    - text
+  poi_required_fields:
+    - poi_id
+    - displayname
+    - alias
+    - category
+    - category_code
+    - address
+    - lat
+    - lng
+    - city
+    - source_dt
+    - text
+  poi_method_fields:
+    - poi_id
+    - displayname
+    - alias
+    - category
+    - category_code
+    - address
+    - lat
+    - lng
+    - city
+    - source_dt
+    - text
+  poi_audit_only_fields: [area, layer, click_score]
+  forbidden_poi_fields:
+    - brand
+    - canonical_poi_id
+    - landmark
+    - category_l1
+    - category_l2
+    - category_l3
+  train_required_fields:
+    - sample_id
+    - order_id
+    - searchid
+    - split
+    - target_poi_id
+    - messages
+  train_split: train
+  train_date_start: '2026-07-01'
+  train_date_end: '2026-07-12'
+  valid_date: '2026-07-13'
+  test_date: '2026-07-14'
+
+identifier:
+  gid_tokens: 6
+  sid_tokens: 3
+  gid_codebook_size: 32
+  sid_codebook_sizes: [1024, 1024, 1024]
+  base_token_order: [G1, G2, G3, G4, G5, G6, S1, S2, S3]
+  singleton_length: 9
+  collision_length: 10
+  dedup_capacity: 512
+  dedup_assignment: poi_id_lexicographic_zero_based
+
+method:
+  poi_embedding_source: frozen_beijing_bge_m3
+  metric: cosine
+  residual: projection
+  remove_common_direction: true
+  gid_order: before_sid
+  final_pid: gid6+sid3+optional_existing_dedup
+  query_normalization: conservative_qg_v1
+  query_weights: [0.15, 0.25, 0.35]
+  hard_graph:
+    weights:
+      bge: 0.35
+      name_alias: 0.30
+      category: 0.15
+      address: 0.10
+      geo: 0.10
+    top_k: 20
+    threshold: 0.60
+    excluded_fields: [area, layer, click_score]
+
+query_stats:
+  num_shards: 256
+  buffer_rows_per_shard: 4096
+  read_batch_rows: 65536
+  min_query_count: 2
+  min_pair_count: 2
+  min_top1_share: 0.75
+  min_margin: 0.25
+  max_normalized_entropy: 0.55
+  false_negative_min_share: 0.10
+  false_negative_min_count: 2
+
+query_embedding:
+  model_path: models/bge-m3
+  backend: sentence_transformers
+  device: cuda
+  batch_size: 256
+  encode_buffer_size: 8192
+  max_seq_length: 128
+  torch_dtype: bfloat16
+  attention: sdpa
+  padding_side: right
+  normalize_embeddings: true
+  prompt_name: null
+  output_dtype: float16
+  checkpoint_interval_batches: 20
+
+query_adapter:
+  enabled: true
+  bottleneck: 64
+  residual_scale: 1.0
+  dropout: 0.05
+  optimizer: adamw
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  epochs: 3
+  batch_size: 2048
+  precision: bf16
+  max_grad_norm: 1.0
+  temperature: 0.05
+  dev_fraction: 0.05
+  ann_top_k: 100
+  semantic_ann_negatives: 6
+  lexical_metadata_negatives: 4
+  local_geo_negatives: 6
+
+query_prototypes:
+  max_queries_per_poi: 32
+  max_prototypes_per_poi: 4
+  prototype_kmeans_iterations: 10
+  support_tau: 4.0
+
+rqkmeans:
+  max_iterations: 30
+  min_iterations: 5
+  assignment_change_tolerance: 0.001
+  objective_relative_tolerance: 1.0e-4
+  n_init: 3
+  empty_cluster_reinit: farthest
+
+geo_s3:
+  enabled: true
+  parent_key: full_gid+s1+s2
+  geo_weight_max: 0.25
+  hard_conflict_weight: 0.05
+  local_candidate_codes: 32
+  local_refine_sweeps: 3
+
+runtime:
+  sample_limit: 16
+  overwrite: false
+  resume: false
+  show_progress: true
+  chunk_rows: 32768
+
+frozen_inputs:
+  embedding_manifest_sha256: 3fabca469d0a6e9920b8d6523c69959db1f733c6564f5b6cb1b3db21ca7a969a
+  embedding_fingerprint: d97c1dfbb82b46ede4e83a8e504370bec798ff986e6494a69a5e0dd4a91ea071
+  poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  sft_manifest_sha256: f254e6f2ad8c0591732887163a1211a46e9718f4071674886c12b26360334ce9
+  train_sha256: 4ed3f3849e0beb10df500f013bc08b4663b0dca5df92dde9c8b3cb4a7ec9ffe4
+  valid_sha256: 14dabc842ba4623f19b2d9e21cafa026917d333db78016956cc4bcfc506ba187
+  test_sha256: d1ac483a2ddc880b8261a2644b865dba1eef09f712930b51f46d8283faafa8b7

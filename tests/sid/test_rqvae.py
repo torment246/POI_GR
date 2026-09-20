@@ -21,6 +21,7 @@ from poi_gr.sid.rqvae import RQVAE, hard_utilization_loss
 from poi_gr.sid.training import (
     build_model,
     config_payload,
+    create_fixed_indices,
     export_checkpoint_sid,
     initialize_codebooks_kmeans,
     load_training_config,
@@ -78,6 +79,36 @@ class RQVAETest(unittest.TestCase):
             smaller.decoder.parameters(), larger.decoder.parameters(), strict=True
         ):
             self.assertTrue(torch.equal(left, right))
+
+    def test_full_catalog_kmeans_scope_includes_validation_rows(self) -> None:
+        train_mask, validation, initialization, metadata = create_fixed_indices(
+            100,
+            validation_ratio=0.1,
+            kmeans_sample_size=100,
+            seed=42,
+            kmeans_sample_scope="all",
+        )
+        self.assertEqual(int(train_mask.sum()), 10)
+        self.assertEqual(len(validation), 10)
+        np.testing.assert_array_equal(initialization, np.arange(100))
+        self.assertEqual(metadata["kmeans_sample_scope"], "all")
+        self.assertEqual(metadata["kmeans_sample_pool_rows"], 100)
+        self.assertEqual(metadata["kmeans_sample_rows"], 100)
+        self.assertEqual(
+            metadata["algorithm"], "full_initialization_pool_in_row_order"
+        )
+
+    def test_default_kmeans_scope_excludes_validation_rows(self) -> None:
+        mask, validation, initialization, metadata = create_fixed_indices(
+            100,
+            validation_ratio=0.1,
+            kmeans_sample_size=100,
+            seed=42,
+        )
+        self.assertEqual(len(initialization), 90)
+        self.assertFalse(np.any(mask[initialization]))
+        self.assertTrue(set(validation).isdisjoint(set(initialization)))
+        self.assertEqual(metadata["kmeans_sample_scope"], "train")
 
     def test_multi_hidden_layer_encoder_decoder(self) -> None:
         model = RQVAE(8, [7, 6, 5], 4, [3, 4, 5])

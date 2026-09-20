@@ -1,19 +1,36 @@
 # 项目状态
 
-更新时间：2026-08-24。
+更新时间：2026-09-19（A0-GID 全量 Test 已验收；QG-PRQK v3.0 已完成方案复核与代码规划，尚未实现）。
+
+QG-PRQK 新版本采用全量 Query 软粒度监督、POI 分层搜索分布和共享 POI assignment 的内容/搜索双质心。方案复核已修正深度/质量混用、深层权重饱和及零条件残差引入 code 偏好的问题，10 项 CPU 合成数学检查通过；这些检查不是生产实现或检索验收。首轮固定类别/地理项，Query 开/关两边统一全 512 候选，再做真实 SFT 配对；真实距离冲突项随后单独比较。用户要求以实验结果迭代、先复用代码、待方法稳定后整理；下一最小开发步骤为真实字段/路由契约与合成测试，之后搜索分布和量化核心可先用合成路由开发，真实标签仍待准备。本次未修改生产代码、配置、模型或实验结果。方案见 [v3.0 主规范](../qg_prqk/docs/methods/QG_PRQK_METHOD_SPEC.md)，具体代码切片和调整规则见[执行计划](../qg_prqk/docs/methods/QG_PRQK_CODEX_EXECUTION_PLAN.md)，已有方法见 [v2.1-CAT 归档](../qg_prqk/docs/methods/QG_PRQK_V2_1_CAT_SPEC.md)。
+
+A0-GID epoch-3 checkpoint-8955 的 2026-07-14 全量 Test 双解码已完成：两模式各 606,682 条，两个 worker 和父启动器退出 0，进度统计、排名直方图复算及结果汇总一致。无约束 HR@1/HR@10/NDCG@10 为 50.9641%/85.6261%/69.2049%，全目录约束为 51.1357%/87.2192%/69.9686%。同口径 A4−A0 约束差值仅 +0.0125/−0.0157/+0.0183pp；两者整体接近，新增组件组合尚无清晰的最终指标增益，不能把 A4 超过 GenPOI 当成组件有效性的证据。尚无显著性检验和多 seed 复跑，不宣称统计等价。详见 [EXP-20260918-02](../qg_prqk/docs/experiments/QG_PRQK.md#exp-20260918-02a0-gid-全量-test-双解码验收)；后续改进以 Validation 选择，Test 不用于调参。
 
 ## 当前阶段
 
-北京地图 POI 生成式检索已完成 V1、TIGER、GNPR-SID 以及旧版与 Centered GenPOI 的固定 10,000 条 Validation 最小闭环。Query-Augmented Relational SID 创新线已冻结 E4/α=0.30/β=0.85，并完成 E4 RQ-KMeans 三容量候选、对称 `1024³` Embedding × Quantizer 下游 `2×2`、MMBERT 四层和 GHR 全局共享 `32×32` 固定五层的三轮 SFT、固定随机双解码与四类泛化 Validation 10k。完整生成和四类泛化宏平均仍没有创新候选超过 TIGER；BGE+RQ-KMeans 是泛化最接近者。MMBERT 只在冷目标出现 HR@1/HR@10/NDCG@10 的局部正向。GHR 三组逐层与 TIGER `C>0` 同样本诊断已完成：三组整段后缀 Teacher-Forcing 均约 80%—82%，局部后缀并非首要瓶颈；固定 `32×32` 的 Bucket→完整 HR@10 损失与 TIGER 接近，主要差距已经出现在三级 Bucket，EXP-14 还叠加长变序列的暴露偏差。下一步只补 MMBERT 同口径诊断，不继续扩搜静态码本或直接启动新 SFT。
+A0/A4 单卡 Qwen 逐层诊断已验收：五组 Validation 各 100 条、两模型各 500 条，正式链路 9 个退出码均为 0。正确前缀下 S1 Top-1 为 61.4→60.0%、S2 为 74.8→76.6%、S3 为 74.0→73.8%，三层同时正确均 43.4%；未出现静态 probe 差距等幅传递。最终约束候选的主要缺失在 GID/S1 联合前缀，后缀不是首要瓶颈。小样本与完整切片存在方向反转，应以原完整评测确认收益、用诊断定位机制；下一建议为每组 1,000 条配对扩样，尚未运行。见 [EXP-20260918-01](../qg_prqk/docs/experiments/QG_PRQK.md#exp-20260918-01a0a4-qwen-配对逐层诊断验收)。
+
+2026-07-14 全量 Test 的 606,682 条四模型配对评测已完成，四项及父启动器退出 0。按冻结的各方法解码协议，QG-HRQ(GID) 的 HR@1/HR@10/NDCG@10 为 51.1482%/87.2035%/69.9869%，领先 GenPOI 0.3756/0.4188/0.4307pp；NoGID 为 50.5710%/86.3446%/69.2324%，略低 GenPOI、高于 GNPR。约束相对同 checkpoint 无约束使 GID/NoGID 的 HR@10 提高 1.6915/1.1741pp；本次不含 A0，不能替代组件消融。详见 [完整记录](../qg_prqk/docs/experiments/QG_PRQK.md#exp-20260917-03active-四模型全量-test-评测)。
+
+Active GenPOI 最新 Centered GeoPE32 修正版的 512×3 SID 与唯一 PID 已完成：716,245 条 SID 的 Distinct / POI 为 75.1829%，追加 Geohash6 后为 89.3937%，再加条件 Dedup 后全部唯一。用户要求后续 SFT 数据准备随平台脚本运行：四卡入口已串接配对数据、扩词模型、1024 零截断预检、packed Cache 和 3 轮 SFT，保持 active TIGER/GNPR 的用户哈希、Query/GID、历史和划分。平台全量准备与三轮 SFT 已完成，退出码均为 0；checkpoint 为 2956/5912/8868，Validation Loss 为 0.337292/0.251696/0.239886。epoch-3 五集 SSP+TCG 评测已完成：固定 HR@1/HR@10/NDCG@10 为 50.48%/86.43%/69.2555%，四类泛化宏平均为 22.9575%/51.3100%/36.3345%，PID 合法率均为 100%；相对 active TIGER-BGE 泛化三项高 2.8325/9.0450/5.6356pp（各方法采用原解码协议）。默认平台准备流程已写入项目 workflow skill。详见 [GenPOI 实验](experiments/GENPOI.md#exp-20260917-01active-genpoi-epoch-3-固定与泛化-validation-评测)。
+
+GNPR active 对照已闭环：四卡三轮 SFT 的 epoch 1/2/3 为 `checkpoint-2459/4918/7377`，Validation Loss 为 0.559589/0.421840/0.404873；单卡 A100 固定 10k 与四类泛化 10k 均已完成。固定集 HR@1/HR@10/NDCG@10 为 48.65%/82.00%/66.2168%，比 active TIGER-BGE 低 1.13/2.51/1.8328pp；四类泛化宏平均为 18.2700%/37.1100%/27.3832%，低 1.8550/5.1550/3.3157pp。SID 为 512×3，distinct SID/N 85.7662%、最终标识 100% 唯一，但较高静态唯一率没有转化为更高检索召回。平台训练后误报 failed 的索引控制流已在共享入口和 active launchers 中修复。详见 [GNPR 实验](experiments/GNPR_SID.md#exp-20260916-02active-gnpr-epoch-3-固定与泛化-validation-评测)。
+
+北京地图 POI 生成式检索已完成 V1、TIGER、GNPR-SID 以及旧版与 Centered GenPOI 的固定 10,000 条 Validation 最小闭环。Query-Augmented Relational SID 创新线已冻结 E4/α=0.30/β=0.85，并完成 E4 RQ-KMeans 三容量候选、对称 `1024³` Embedding × Quantizer 下游 `2×2`、MMBERT 四层和 GHR 全局共享 `32×32` 固定五层的三轮 SFT、固定随机双解码与四类泛化 Validation 10k。完整生成和四类泛化宏平均仍没有创新候选超过 TIGER；BGE+RQ-KMeans 是泛化最接近者。GHR 三组和 MMBERT 的逐层、Bucket 与碰撞后缀归因均已闭环：GHR 局部后缀并非首要瓶颈；MMBERT 的三级累计 Top-1/唯一 Bucket HR@10 为 50.17%/84.19%，后者低 TIGER 3.87pp，而其自身 `C>0` 条件 C Top-1 为 83.25%。现有证据把共同核心问题收敛为“如何保留可生成的粗层前缀，同时注入更强连续表征或局部区分能力”。`EXP-20260828-01/02` 已完成 TIGER 与 E4 后移固定 10k 的无训练 Bucket→POI 解析：两轮热度、词法、语义和 RRF 八个变体均低于各自原 `C` token；E4 虽有 `59.69%/88.45%` 的 Bucket HR@1/10，上界仍不能通过直接替换 `C` 兑现。TIGER-Joint 第一版也已完成从严格 SID-free 数据到四卡三轮训练和 epoch-3 固定 10k Bucket 评测的完整闭环：全目录三级 SID 唯一率为 81.9255%；无约束候选可展开率/HR@10 为 18.410%/34.97%，终态全目录合法路径约束把二者提升为 100%/44.64%，但 HR@1 仅由 22.84% 变为 22.99%，且各截止点仍远低于 TIGER。当前证据说明目录外组合路径只是失败因素之一，逐 batch 动态 hard SID 还没有让 Qwen 学好正确终态 Bucket 的概率排序；第一版保持关闭，不追加 `C`、额外 epoch 或 Test/泛化评测。作为下一项严格对照，冻结 TIGER SID 后的 `GID6+SID3+[D]` 与 `SID3+GID6+[D]` 已完成共享初始化下的三轮 SFT；两版 epoch 3 均为 `checkpoint-8967`，Validation Loss 分别为 0.201809/0.212261。固定业务键 10k、两种全目录变长 Trie 及无约束/合法路径约束 evaluator 已通过预检与 smoke，正式四项指标等待 4×6000D 平台并行评测。
+
+活跃闭集配对实验现也已完成：716k active-BGE 固定 10k 和四类泛化均低于旧目录 TIGER；active-MMBERT 固定主指标略低 active-BGE，但四类泛化宏平均高 `2.0750/2.2175/2.3183pp`（HR@1/HR@10/NDCG@10），收益集中在长尾与冷目标。
 
 | 方法 | 当前进展 | 固定子集结果 | 状态 |
 |---|---|---|---|
 | V1 | Qwen3-Embedding-0.6B → RQ-VAE → Geohash6/Dedup → 2 epoch SFT → Final PID Trie | epoch 2：HR@1/HR@10/NDCG@10 = 45.77%/84.83%/65.99% | 已完成 |
-| TIGER | BGE-M3 → RQ-VAE → collision token → 历史 10 条 SFT → 无约束 Beam | epoch 3：51.87%/87.16%/70.42%，Valid ID Rate 74.105%；三层唯一 Bucket HR@10 88.06% | 复现与首项 Bucket 诊断已完成 |
+| TIGER | BGE-M3 → RQ-VAE → collision token → 历史 10 条 SFT → 无约束 Beam | 旧 233 万目录 epoch 3：51.87%/87.16%/70.42%；active 716k 固定无约束为 49.78%/84.51%/68.0496%，四类泛化宏平均为 20.1250%/42.2650%/30.6989% | active `512³` 三轮训练、固定双解码和四类泛化全部完成；整体未形成提升 |
+| TIGER PID 顺序消融 | 冻结 TIGER SID3 + POI Geohash6 + 局部 D → `GID-first` / `SID-first` 同协议三轮 SFT | 两版 epoch 3 均为 `checkpoint-8967`，Validation Loss 为 0.201809/0.212261；正式固定 10k 指标待运行 | 三轮训练完成；两种全库 Trie、四项 smoke 与 4×6000D 并行评测入口已就绪 |
+| Bucket 重排 | 生成三层 Bucket → 展开目录候选 → 轻量信号排序 → 最终 POI Top-10 | TIGER/E4 后移最优无训练热度为 50.64/83.52/67.1616% 与 48.46/81.19/64.8585%，均低于各自原 `C` | 两轮八变体均未过门禁；停止直接替换 `C`，下一版仅评估保守候选补全 |
+| TIGER-Joint | 原始行为+BGE 行序 → fresh 三层 RQ-VAE ↔ vanilla Qwen fresh 扩词动态训练；全目录 RQ 流覆盖冷 POI | 四卡三轮 44,454 step 完成；epoch 3 合法路径约束 Bucket HR@1/HR@10 为 22.99%/44.64%，100% 可展开；无约束为 22.84%/34.97% | 合法性已修复但召回仍失败；第一版保持关闭 |
 | GenPOI | BGE-M3 + Centered GeoPE32 → TIGER-RQVAE → Geohash6/Dedup → 历史 10 条 SFT → SSP+TCG | Centered epoch 3：51.98%/87.83%/70.7430%，Valid PID Rate 100% | 旧版与 Centered 修正版闭环均完成 |
 | GNPR-SID | BGE-M3 + 类别 + PlusCode6 → Diversity Loss RQ-VAE → 碰撞 SID Dedup → 历史 10 条 SFT → 无约束 Beam | epoch 3：HR@1/HR@10/NDCG@10 = 49.66%/83.07%/67.2390%，Valid ID Rate 78.808% | 已完成 |
 | Embedding × Quantizer | BGE/E4 × RQ-VAE/RQ-KMeans → collision token → 同协议 SFT/Beam | 四类泛化宏平均最优创新 BGE+RQ-KMeans 为 24.6500%/50.4625%/37.0584%，仍低 TIGER；E4 非对称布局仅长尾局部正向 | 四格下游、五组 Bucket 诊断和四类泛化 28/28 单元均闭环；停止静态码本扩搜，转向完整 SID/碰撞后缀可学习性 |
-| 向量模型优化 | MMBERT Recall 128 → TIGER RQ-VAE `1024³` → collision token → 配对 SFT | 固定 epoch 3 无约束 49.89%/83.84%/67.8842%，四类宏平均 22.6125%/44.5925%/33.2601%；冷目标三项比 TIGER 高 0.85/0.61/0.8673pp | 三轮训练和 8 个评测单元完成；整体低于 TIGER，保留冷启动方向信号 |
+| 向量模型优化 | MMBERT Recall 128 → TIGER RQ-VAE → collision token → 配对 SFT | active 716k 固定无约束为 49.46%/84.04%/67.6860%，四类泛化宏平均为 22.2000%/44.4825%/33.0172% | 六项评测完成；固定略低 active-BGE，泛化宏平均领先且长尾/冷目标明显更强，但合法 ID 率更低 |
 | QGR-SID | TIGER 三层 SID → 可靠词法碰撞关系树 → 纯离散数值变长后缀/TIGER fallback | 尚无下游结果；M2-D HR@1 78.9996%，92.77% 请求 fallback | 离线门禁未通过，停止 SFT |
 | GHR-SID | 旧线：G6+变长实体关系；新线：冻结 TIGER3 → latent residual+多尺度地理 → 全局共享 `R1/R2` | 新固定五层 epoch 3 为 50.48%/84.94%/68.6728%，三级 Bucket HR@10 85.97%；四类宏平均 22.5025%/45.1850%/33.4979% | 三组逐层诊断完成；固定两层主要损失在三级 Bucket，EXP-14 还受长变后缀影响，停止扩后缀 |
 
@@ -24,6 +41,9 @@
 - 北京 POI 目录包含 2,337,178 条在线可检索 POI，POI ID 全局唯一；POI 文本使用名称、地址和别名。
 - 订单与历史序列数据共 8,790,513 条目标订单，Train/Valid/Test 严格按 2026-07-01—12、07-13、07-14 切分为 7,586,410/597,421/606,682。
 - 用户历史来自 2026-04-01—06-30，最多保留最近 10 条；历史覆盖率 72.0157%，平均长度 4.9153，空历史样本保留。
+- 已新增活跃闭集 POI 主表 `data/beijing_poi_active_order14d_history10_20260715_json/`：两周全部 Train/Valid/Test 目标 POI 520,333 个、历史 POI 607,456 个、交集 411,544 个，并集 716,245 个。目录按北京全量主表原始行序保存，行为 ID 覆盖、输出行数、POI ID 全局唯一和 ID 清单 SHA256 均已复检；它只作为后续重新构建活跃闭集基线的数据基础，既有 2,337,178 POI 实验结论保持不变。
+- 活跃闭集的新 TIGER SID 基线已完成：BGE-M3 重新编码 716,245 条 POI，三层 `512³` RQ-VAE 的 KMeans 初始化显式使用全目录向量，20 epoch 后全量 SID 唯一率 77.0310%、碰撞 POI 33.7781%、最大桶 152；追加按 `poi_id` 稳定分配的 `C_0…C_151` 后 `[S1,S2,S3,C]` 100% 唯一。三轮 SFT 与六项 Validation 10k 已闭环；固定无约束 HR@1/HR@10/NDCG@10 为 49.78%/84.51%/68.0496%，四类泛化宏平均为 20.1250%/42.2650%/30.6989%，均低于旧 233 万目录 TIGER。
+- 同一活跃目录和 `512³` 协议下的线上 MMBERT Recall 128 SID 也已完成：三层唯一率 90.5999%、碰撞 POI 16.2178%、最大桶及 collision token 容量均为 30，三级码本 512/512/512 满利用，最终四层标识 100% 唯一。严格配对的三轮 SFT 与六项 Validation 10k 已闭环；固定无约束为 49.46%/84.04%/67.6860%，略低 active-BGE，四类泛化宏平均 22.2000%/44.4825%/33.0172%，比 active-BGE 高 2.0750/2.2175/2.3183pp，但泛化无约束 Valid ID Rate 宏平均低 11.1823pp。
 - Qwen3-Embedding-0.6B、4B、BGE-M3 和线上 MMBERT Recall 128 已在无 Train 订单泄漏的固定 SFT Validation 10,000 条上完成全量精确召回；BGE-M3 Hit@10/20 为 32.39%/40.25%，MMBERT 为 41.43%/51.00%。MMBERT 已成为无显式 Train Query 聚合的首选新候选，但 TIGER/BGE 仍是当前已有生成式结果最强基线。
 - 已保留原随机 Validation 10k 和复杂地理 Query 10k，并从完整 Validation 冻结四个互斥的新泛化专项集：已见 Query/未见 Query–POI、新 Query/已见目标、Train 频次 1—5 的长尾目标和 Train 频次 0 的冷目标，每组 10,000 条。三篇论文基线和九组创新方法 epoch 3 已完成同业务键评测，共 48 个正式单元。四组宏平均 HR@1/HR@10/NDCG@10 分别为 TIGER 24.9925%/51.3700%/37.6949%、GNPR 19.0725%/37.7675%/28.2409%、Centered GenPOI 25.2525%/54.1375%/39.0484%；创新方法中 BGE+RQ-KMeans 最好，为 24.6500%/50.4625%/37.0584%，MMBERT 为 22.6125%/44.5925%/33.2601%，GHR 固定五层为 22.5025%/45.1850%/33.4979%。GenPOI 四组 HR@10/NDCG@10 均第一；MMBERT 冷目标 HR@10/NDCG@10 为 18.39%/12.6800%，比 TIGER 高 0.61/0.8673pp，但整体宏平均仍明显回落。
 - 真实数据、模型、Embedding、checkpoint、日志和大体积实验产物均保留在 Git 之外。
@@ -58,6 +78,7 @@
 - `EXP-20260820-04` 将上述 128 维向量接入固定 TIGER RQ-VAE `1024³`：全量三层 SID 唯一率 83.3988%、碰撞 POI 25.5070%、最大桶 154，三层码本利用率均为 100%；相对 BGE-M3+RQ-VAE 唯一率提高 11.7223pp、碰撞 POI 降低 15.2824pp。追加 `C0–C153` 后四层 identifier 全局唯一；depth-1/2 类别 micro-purity 降至 52.13%/70.03%，因此只判定静态门槛通过，仍须配对 SFT 才能判断是否超过 TIGER。
 - `EXP-20260820-05` 已冻结 MMBERT 四层 SID 的配对 SFT 输入。Messages Train/Valid/Test 为 7,586,410/597,421/606,682，非 identifier 协议与 TIGER 一致；扩词 5,274 项。Train+Valid cutoff 1024 全量预检最长完整序列 953、超长和 Assistant 目标截断均为 0，packed Train/Validation 为 1,296,883/96,949。4×A100 首次正式训练使用单卡 batch 16、累积 8，在 step 1 后因每卡还需申请 9.58 GiB 而 CUDA OOM，无 checkpoint；随后改为 batch 8、累积 16，global batch 512 不变并已在 `EXP-20260822-01` 从头完成三轮训练。
 - `EXP-20260822-03` 完成 MMBERT epoch 1/2/3 固定随机 10k 无约束、epoch 3 合法路径和四类泛化。固定 epoch 3 无约束 HR@1/HR@10/NDCG@10 为 49.89%/83.84%/67.8842%，相对 TIGER 低 1.98/3.32/2.5348pp；合法路径后仍低 2.04/3.23/2.5862pp。四类宏平均为 22.6125%/44.5925%/33.2601%，整体明显低于 TIGER；冷目标为 7.93%/18.39%/12.6800%，三项局部高 TIGER 0.85/0.61/0.8673pp。
+- `EXP-20260826-01` 完成 MMBERT `checkpoint-7599` 的同一固定 10k 逐层与 Bucket 归因。S1/S1+S2/S1+S2+S3/完整 ID 的 gold-prefix Top-1 为 69.06%/54.57%/50.17%/48.83%，相对 TIGER 分别低 6.00/7.18/3.81/1.93pp；S3 条件 Top-1 反而高 TIGER 2.61pp。自由生成唯一 Bucket HR@1/3/5/10 为 52.05/75.66/81.24/84.19%，四项低 TIGER 3.48—3.98pp；1,617 条精确 Top-10 miss 中 1,581 条没有目标桶，理想 C/桶内处理上界只增加 0.36pp。MMBERT 自身 `C>0` 1,003 条的条件 C Top-1 为 83.25%，因此当前失败定位为 S1/S2 层级可预测性和前三层自由覆盖，而不是碰撞后缀。
 - 已冻结 10,000 条 BGE Query 向量，SHA256 为 `98e2032b86b76cf42991dc1d1f4967ff456661fb32fbae185652163c85bf70e0`；行映射 SHA256 为 `d512aa206468ea672b473ce38c353eca703c64289ac890d9a935cd3c9b2f855f`。
 - 已完成 1,408,778 条唯一 Train Query 的 BGE-M3 正式编码：行号严格等于连续 `query_id`，shape 为 `[1408778, 1024]`、dtype 为 float16、SHA256 为 `e300e248a274a0febbcfb94b0b457f76916814564316029e258fd2bfe692ad67`，独立 `--validate-only` 复检通过。任务在开发机 RTX A6000 上用 BF16、batch 256、buffer 8,192 和 max length 128 完成，编码耗时 316.65 秒，峰值 allocated/reserved 显存约 1.76/2.45 GiB。
 - 已为 491,213 个有 Train Query 的 POI 构建 E1 等权均值与 E2 `log1p(count) × IDF` 加权聚合，两个 491,213×1,024 float16 产物通过完整哈希、有限值、POI 行和计数守恒复检；全量聚合耗时 321.73 秒、峰值 RSS 6.72 GiB。
@@ -106,6 +127,22 @@
 - epoch 3 在固定子集检索指标最好，但约 25.90% 的 Beam 候选无法映射到冻结 identifier 表；该差异按论文复现口径保留，不使用 Trie 后处理掩盖。
 - epoch 3 的统一合法路径诊断已完成：Valid ID Rate 从 74.105% 提高到 100%，HR@1/HR@10/NDCG@10 从 51.87%/87.16%/70.4190% 提高到 52.17%/87.99%/70.9493%。该结果只作为解码诊断，不替换上面的无约束论文口径。
 - `EXP-20260819-01` 保存了固定普通 10k 的全部 Beam=10 候选，并按前三层 `[S1,S2,S3]` 统计基础桶。精确 POI 与唯一可展开 Bucket 的 HR@1/3/5/10 分别为 `51.87/76.00/82.26/87.16%` 和 `55.53/79.64/85.10/88.06%`；1,284 条精确 miss 中有 1,194 条连目标基础桶也未进入 Beam。当前 Bucket 展开对 HR@10 的理想上界仅增加 90 条，主要 Top-K 瓶颈在前三层覆盖；Top-1 仍保留 3.66pp 的理想重排空间。
+- `EXP-20260828-01` 在同一轨迹上完成无训练 Bucket→POI 解析。候选池平均 14.5595 条、目标覆盖 88.06%；热度、词法、BGE 的 Bucket 内 HR@1/HR@10 分别为 50.64/83.52%、50.12/83.49%、46.58/83.13%，均低于原 `C`。目标碰撞 Bucket 已排第一的 2,180 条请求中，原 `C` HR@1 为 85.55%，仍高于三者 77.57/75.18/58.95%。因此保留展开和评测基础设施，但停止直接替换 `C` 和跨桶全局启发式排序。
+
+### Bucket 重排
+
+- `EXP-20260828-02` 把同一无训练解析合同迁移到 E4 容量后移 `512×1024×2048`。候选池平均 19.2978 条、目标覆盖 88.45%；最优简单桶内热度 HR@1/HR@10/NDCG@10 为 48.46%/81.19%/64.8585%，低于原完整 ID 的 50.58%/87.07%/69.7840%。在目标 Bucket 已排第一且碰撞的 3,360 条请求上，原 `C` HR@1 为 74.64%，高于热度/词法/E4 的 66.58%/60.24%/50.03%。更大的 Bucket 上界仍无法通过删除 `C` 兑现，下一版只允许保留原完整候选及顺序的候选补全。
+
+### TIGER-Joint
+
+- 第一版固定只复用 BGE-M3 全目录向量和 `poi_ids.jsonl` 行序。数据从原始行为 `poi_id` 直接产生 BGE 行号；fresh `1024→512→256` 三层 RQ-VAE、三级 SID 分配及 vanilla Qwen 新增 Token 行都从头创建，不读取旧 TIGER JSONL、SID mapping、resolved config、扩词表或 checkpoint。
+- 新 schema 为 `tiger-joint-sid-free-data-v1`，历史使用 `<POI_SID>` 动态槽位；旧 schema、`target_tiger_id_key`、`<POI_TIGER_ID>`、`<C_*>` 和 `test.jsonl` 都被主入口拒绝。`EXP-20260827-01` 已完整扫描 32 个原始分片、8,790,513 行，构建 Train/Valid 7,586,410/597,421 行；606,682 条 Test 日期记录在行为格式化前跳过，最终目录不含 Test JSONL。BGE signature/shape/POI 行序 SHA256 在构建、预检和 smoke 三处绑定。
+- 严格隔离的 RTX A6000 单步已验证 `L_gen/L_align/L_rq` 与 Qwen、Query 投影、RQ encoder/decoder/codebook 的联合梯度链路，峰值 allocated 约 5.67 GiB；该结果只证明可运行。正式全量预检共验证 48,522,625 个 POI 行引用和 145,567,875 个动态槽位，完整长度 P50/P99/max 为 147/337/946，Source 最大 939、Target 恒为 7，超过 1,024 和目标截断均为 0，`formal_gate_passed=true`。
+- `EXP-20260826-02` 的 8,183,831 行结果仍是真实的旧适配兼容诊断，但因读取旧 SID mapping、resolved config 和旧扩词表，不再计为 `J1` 正式门禁。`EXP-20260827-02` 的随机初始化固定 batch 在第 3 步发生 SID 2→1 塌缩。`EXP-20260827-03` 已按 TIGER-Joint 自有 seed 42、1% Validation、500,000 行样本和 `faiss_gpu` 参数完成 fresh 三级 KMeans，每层 1,024 个码全使用；KMeans 后 30 step 保持 SID 2→2，但 3 个 SID Token 尚未学会，延长相同轨迹到 100 step 后教师强制 SID/静态/整段和自由目标精确/合法率均为 100%。这说明原失败由随机码本退化与过短观测时长共同造成，不需要增加 UniSearch 模块或改写当前三项 loss。
+- `EXP-20260827-04` 已在 4×RTX 6000D 上完成三轮联合训练，44,454 step、三个 epoch checkpoint 和全部可恢复状态均完整，耗时 36.80 小时。固定 4,096 行 probe 的 S1/S2/S3 利用率由 93.95/82.81/75.78% 变为 40.43/91.60/90.53%，RQ-VAE 确实发生更新；训练只读取 Train，无旧 SID、Validation 或 Test 读取。
+- `EXP-20260829-01` 冻结 epoch 3 并导出全目录 `int32[2,337,178,3]` SID。S1/S2/S3 使用码数为 425/1,024/1,024，完整 SID 唯一率 81.9255%，桶 P50/P99/max 为 1/5/669；固定 10k 目标桶平均大小 2.0863。无约束 Beam=10 的三级语法合法率为 99.894%，但可展开率仅 18.410%，唯一 Bucket HR@1/3/5/10 为 22.84/32.90/34.77/34.97%，相对 TIGER 低 32.69/46.74/50.33/53.09pp。10,000 行、100,000 个候选已由独立脚本逐行重解析并复算一致。
+- `EXP-20260830-01` 在同一 checkpoint、SID、业务键、Beam 和 batch 上只增加终态全目录 Prefix 约束。100,000 个候选的前缀、wrapper 和可展开率均为 100%，每条请求恰好有 10 个唯一合法桶；Bucket HR@1/3/5/10 为 22.99/35.40/40.00/44.64%，相对无约束提高 0.15/2.50/5.23/9.67pp。10,000 行和 100,000 个候选已再次独立复核一致。
+- 第一版失败的证据现已拆成两层：无约束时 Qwen 与最终 epoch-3 离散目录不一致，造成大量目录外组合；强制修复合法性后，正确目标桶仍没有获得足够高的概率，尤其 Top-1 几乎不变。两者都与动态 hard-label 轨迹可能相关，但当前实验不能证明唯一因果。按既定边界不评测 epoch 1/2、Test 或泛化集，不追加 `C`、Query encoder 和额外 epoch；联合训练第一版关闭。
 
 ### GenPOI
 
@@ -139,7 +176,11 @@
 - 共享机器曾发生 memory-cgroup OOM；全量数据处理必须继续使用 mmap、分片流式聚合或 YARN，避免同时运行高内存 Spark 和 GPU 评测。
 - 长尾/新增 POI 的 Validation 专项已经完成三篇论文方法评测；结果显示目标 Train 覆盖比 Query 是否重复更关键，冷目标 HR@10 只有 TIGER/GenPOI 17.78%/20.81%、GNPR 4.27%。Geohash6 边界效应、跨区域召回、重复 POI canonical 指标和 no-result 增量仍未形成正式专项实验。
 - 复杂地理 Query 专项集仍来自北京同城 Validation，且规则可能把部分含“东门”“A口”的名称型 Query 视为地理约束；该结果不能外推为跨城效果，也未隔离 GenPOI 的 SSP 与 TCG 单模块贡献。
+- Bucket 重排已评测 TIGER 与 E4 容量后移的固定普通 Validation 10k 无训练信号；仍没有地理、POI 质量、训练式排序器或 Test，因此只能拒绝“直接用无训练启发式替换 `C`”，不能外推为所有 Cluster SID 的桶内解析均不可行。
+- TIGER-Joint 只评测了 epoch 3；终态 Trie 约束只是推理诊断，不等于训练期固定合法监督，也不解决碰撞 POI 的桶内排序。当前负结论只覆盖逐 batch 动态 hard SID 的第一版，不外推到带 momentum teacher、周期性标签刷新或固定合法路径监督的其他联合方案。
 
 ## 下一最小步骤
 
-代码目录整理、论文复现、Embedding/量化组合、泛化集、三层 Bucket 以及 MMBERT/GHR 的完整生成评测均已闭环；GHR 三组逐层、Bucket 和严格同样本整段后缀归因也已完成。下一最小步只对 MMBERT `checkpoint-7599` 复用固定随机 Validation 10k，补逐层 gold-prefix 累计准确率、自由生成三级 Bucket 覆盖和给定正确前三层后的 `C` 条件准确率。完成 MMBERT 归因后再决定是否批准一次 GHR 前缀能力保持的最小训练消融；此前不增加码本、容量、后缀层数或启动新一轮昂贵 SFT。
+当前 QG 方法迭代先完成 v3.0 的全量 Query/Pair、粒度标签/路由、搜索分布数据契约及合成验证；新粒度模型、SID、SFT 和地理改版均未运行。旧 A0/A4 诊断扩样属于可选后续分析，不替代该开发步骤。
+
+其他方法此前登记的待办为：使用 4×RTX PRO 6000D 并行完成 TIGER `GID6+SID3+[D]` 与 `SID3+GID6+[D]` epoch-3 的无约束/合法路径约束固定 10k 四项评测；只在四项均完成后比较顺序优劣。它不属于本次 QG 文档任务。TIGER-Joint 第一版和 TIGER/E4 无训练 Bucket 重排保持关闭，不补评 epoch 1/2、Test 或继续调旧变体。

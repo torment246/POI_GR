@@ -336,3 +336,298 @@ TMPDIR=outputs/tmp/tbkt python scripts/tiger/evaluate_retrieval.py \
 - 独立逐行复算确认：从原始 token 重建三层前缀及目录桶大小后，行号连续、候选 rank 为 1—10，存储的前缀、桶大小和 exact/raw/unique rank 均为 0 条不一致；10 个分片各 1,000 行且哈希全部通过，按序拼接的 SHA256 与总轨迹一致，复算三组 HR 与 `result.json` 完全一致。实现收敛期间的 v1 漏计后缀非法候选，v2 虽然指标正确但轨迹中的桶大小不自洽；二者仅保留为调试产物，正式结论只采用通过逐行复算的 v3。
 - 关键结论：Beam=10 下有 1,284 条精确 POI miss，其中 1,194 条连目标三层桶也未进入候选；删除 `C` 并在当前 Beam 内做理想桶展开最多只新增 90 条 Top-10 命中，即 HR@10 理论增量仅 0.90pp。当前 Top-10 主瓶颈因此是前三层目标 Bucket 覆盖，而不是 collision code。
 - Top-1 仍存在最多 3.66pp 的理想 Bucket 排名空间，说明局部重排可能改善首位排序，但不能单靠它大幅提高候选覆盖。下一最小实验应使用同一口径测量 BGE+RQ-KMeans 与 E4 候选；只有它们的 Bucket-HR 明显高于 TIGER，才继续 E4/地理/历史桶内重排，否则转入受限 QD-RQ Top-32 弱权重门禁。本实验不据 TIGER 单点结果提前启动新 SFT。
+
+## EXP-20260830-02 TIGER SID + Geohash6 组合键与局部 Dedup
+
+### 目标与假设
+
+- 目标：冻结论文复现采用的 `TIGER-BGE-M3-1024×3 / epoch 20` 三层 SID，为 2,337,178 条目标 POI 编码标准 Geohash6，并以九元组合键 `GID6+SID3` 重新分桶；只在该组合键仍碰撞时追加局部 `D`，为后续 `GID+SID+D` 与 `SID+GID+D` 自回归顺序消融提供同一套唯一 POI 映射。
+- 假设：Geohash6 能拆开一部分跨区域语义碰撞；交换 GID6 与 SID3 只是九元组列置换，静态碰撞与 Dedup 分配必须完全相同，后续效果差异只能由自回归顺序和相应历史表示引起。
+- 边界：本实验只构建并核验静态映射，不训练 Qwen、不生成评测指标，也不把旧 TIGER `C` 直接沿用为新组合键的去重码。
+
+### 数据、代码、配置与环境
+
+- 输入 SID 为 `outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/evaluations/epoch_20/`，SID manifest SHA256 为 `1195ca8c17fd0f637a88634759b47e38b0f164ad858ac3ee985dfd14fc8136d8`；三层 shape `[2337178,3]`、容量均为 1024，SID-only 指标逐字段重算一致。
+- POI 主表为 16 个北京全量分片；2,337,178 个 `poi_id` 与 SID 行序逐行一致，POI ID SHA256 为 `b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7`。目标 GID 使用 POI 主表 `lng/lat` 的标准 Geohash6，经度先编码，不做坐标转换；不使用请求位置 `disp_lng/disp_lat`。
+- 代码基线提交 `54802e6674e283722ecee00fb862530df30cef9a`，运行使用含既有 PID 构建器的未提交工作树；`geohash.py`/`dedup.py` SHA256 为 `f279d4ee3eb431f57cdbca2746e9e8ced6052039de5b56aada5f3ba57bc2dd3d` / `c06b128e60a2778fa1256bcb65d1473f45ad2379c6ce46d6e72fe6ca534042d1`。
+- 环境为 Python 3.10.20、NumPy 1.26.4、PyArrow 19.0.1；GID+SID 构建耗时 105.19 秒，Dedup 构建耗时 117.58 秒，均正常退出。
+
+~~~bash
+python scripts/pid/build_geohash.py \
+  --sid-manifest outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/evaluations/epoch_20/sid_manifest.json \
+  --geohash-length 6 \
+  --order gid_sid \
+  --output-dir outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6
+
+python scripts/pid/build_dedup.py \
+  --pid-manifest outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6/pid_manifest.json \
+  --output-dir outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6-Dedup \
+  --dedup-capacity 512
+~~~
+
+### 核心指标
+
+| 标识空间 | Distinct / ratio | Colliding POI / ratio | 碰撞桶 | P50 / P90 / P95 / P99 / Max |
+|---|---:|---:|---:|---:|
+| TIGER SID3 | 1,675,209 / 71.6766% | 953,321 / 40.7894% | 291,352 | 1 / 2 / 3 / 7 / 306 |
+| GID6+SID3 | 1,934,335 / 82.7637% | 595,173 / 25.4655% | 192,330 | 1 / 1 / 2 / 5 / 277 |
+| GID6+SID3+[D] | 2,337,178 / 100% | 0 / 0% | 0 | 1 / 1 / 1 / 1 / 1 |
+
+- Geohash6 使 358,148 个原 SID 碰撞 POI 变为唯一，SID 碰撞 POI 解决率为 37.5685%；原 291,352 个碰撞 SID 桶中 120,386 个完全解决。
+- 1,742,005 个 POI 的九元组合键已唯一，不输出 D；595,173 个 POI 位于 192,330 个残余桶，桶内按 `poi_id` 字典序分配连续局部 D。最大桶 277，实际最大 `D_276`；预留 512 个 D Token 足够。
+- Final PID 数组和 Parquet 已直接验证全局唯一；删除可选 D 后可恢复原九元组合键。由于 `SID3+GID6` 是相同九列的双射置换，它与 `GID6+SID3` 共享完全相同的桶、D 和 POI 映射，不重复保存第二份 233.7 万行静态表。
+
+### 产物、结论与下一步
+
+- base PID manifest 位于 `outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6/pid_manifest.json`，SHA256 为 `b061b4fce816858db2618783d6f5da538b847a0a231812fb950929dfe0320277`。
+- Final PID manifest 与映射位于 `outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6-Dedup/`；manifest/mapping SHA256 为 `a9bbf767d303b51d551d32ca91297c2d26dc02a2220a689c6df2282fdd8d9e5c` / `385cc6353db2afa62de3ff403c7fddcb4563bb1bf4491f5c2c8f72b3aba8d3ac`。
+- 静态映射门禁通过。下一步只允许在冻结的同一 TIGER history10 样本上成对线性化两种顺序，共享词表初始化、训练超参和评测子集；D 始终位于序列最后，避免额外位置混淆。
+
+## EXP-20260830-03 两种 PID 顺序的成对全量 SFT 数据
+
+### 目标与假设
+
+- 目标：在 `EXP-20260830-02` 冻结的同一份 `TIGER SID3 + POI Geohash6 + 局部 D` 唯一映射上，一次扫描同时生成 `GID6+SID3+[D]` 与 `SID3+GID6+[D]` 两版 history10 SFT 数据，供后续只比较自回归位置顺序的三轮训练。
+- 假设：两版使用相同样本、样本顺序、请求 GID、目标 POI、历史 POI、D 分配、Token 集合及模型初始权重；D 对单例省略、对残余碰撞样本追加且始终位于最后。训练可见内容的唯一变量是历史和目标 POI 内 GID6/SID3 的前后顺序。
+- 边界：本实验只构建数据并完成轻量契约测试，不启动正式 SFT，不把旧 TIGER `C` 复制到新 PID，也不改当前请求位置的 `<USER_GID>`。
+
+### 数据、代码、配置与环境
+
+- 源数据固定为 `data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/`，manifest SHA256 为 `581a4dd3c285a83f863c4503a603328fbc0e5c13e22a7abbef4fe4a860e896cf`；Train/Valid/Test 为 7,586,410/597,421/606,682。
+- Final PID mapping/manifest SHA256 为 `385cc6353db2afa62de3ff403c7fddcb4563bb1bf4491f5c2c8f72b3aba8d3ac` / `a9bbf767d303b51d551d32ca91297c2d26dc02a2220a689c6df2282fdd8d9e5c`。构建器逐行反查源 TIGER 四层 ID，核验其前三层与 Final PID 的 SID3 完全一致后才允许替换历史和目标标识。
+- 代码基线提交 `54802e6674e283722ecee00fb862530df30cef9a`，实际运行使用未提交工作树；`pid_order_data.py` / CLI SHA256 为 `86db75e3759127f261699acd36322b20f1d0043433dc5fe6610b4d6a1ed894de` / `8fd83c077fad135b592bb45f48b2c939f4a004c31c8113f36c93c4661b94c54a`。环境为开发服务器 Python 3.10.20。
+- 两版共享 5,632 个新增普通 Token：16 个结构 Token、32 个 GID Token、2,000 个用户 Token、3×1,024 个 SID Token 和 512 个 D Token；不含旧 `C` 和 `<D_-1>`。history wrapper 统一改为 `<POI_PID>...</POI_PID>`。
+
+~~~bash
+python scripts/tiger/build_pid_order_sft_data.py \
+  --source-sft-dir data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1 \
+  --tiger-id-dir outputs/sid/tiger/bge_m3/TIGER-BGE-M3-1024x3/tiger_ids/epoch_20 \
+  --pid-mapping outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6-Dedup/poi_pid_mapping.parquet \
+  --pid-manifest outputs/pid/tiger/TIGER-BGE-M3-1024x3-e20-G6-Dedup/final_pid_manifest.json \
+  --gid-sid-output-dir data/sft/tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1 \
+  --sid-gid-output-dir data/sft/tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1
+~~~
+
+### 核心结果
+
+| 项目 | `GID6+SID3+[D]` | `SID3+GID6+[D]` |
+|---|---:|---:|
+| Train / Valid / Test | 7,586,410 / 597,421 / 606,682 | 7,586,410 / 597,421 / 606,682 |
+| history POI 出现次数 | 43,208,167 | 43,208,167 |
+| 需要 D / 不需要 D 的目标样本 | 2,247,612 / 6,542,901 | 2,247,612 / 6,542,901 |
+| Train SHA256 | `4a960288...293b43` | `c83fbb4b...63292` |
+| Valid SHA256 | `e000f9fb...74769` | `e4432d22...54df4` |
+| Test SHA256 | `8cfb11bc...6b18b` | `411b9093...faaa` |
+| Manifest SHA256 | `361aa038...7143df` | `16ce77a0...3b24b` |
+
+- 两个数据目录大小逐切分完全相同：Train 11,632,515,604 bytes、Valid 880,656,518 bytes、Test 905,912,883 bytes；共享 `special_tokens.json` 逐字节一致，SHA256 为 `88a1015661de3d2be47be839f661a03f7fd75cdad8d772c87a6afed17743e7ca`。
+- 构建过程对每行成对检查 `sample_id/order_id/searchid/target_poi_id/history_length/split/requires_dedup`；源 Train/Valid/Test 行数及 SHA256 均与冻结 manifest 相同。两版分别写临时目录，全部完成并生成哈希后才原子切换为正式目录。
+- `python -m unittest tests.tiger.test_pid_order_data -v` 的 4 项合成测试全部通过，覆盖顺序唯一变量、D 可选且恒在尾部、重复构建确定性和错误 TIGER SID 来源拒绝；真实全量 mapping 的三行 smoke 也通过。
+
+### 产物、结论与下一步
+
+- 两版数据分别位于 `data/sft/tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1/` 与 `data/sft/tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1/`；均包含 Train/Valid/Test、共享 Token 表、统计和自描述 manifest，保持 Git 忽略。
+- 成对数据门禁通过。下一步必须从同一份扩词后 Qwen3-0.6B 权重启动，统一 `cutoff_len=1024`、global batch 512、seed 42、3 epoch 和无约束/约束评测协议；正式训练前仍需分别完成 Train/Valid 全量 Token 长度门禁与 packed cache。
+
+## EXP-20260831-01 两种 PID 顺序的全量 Token 门禁与四卡 SFT 入口
+
+### 目标与假设
+
+- 目标：为 `EXP-20260830-03` 的两版成对 Messages 构建同源扩词模型、完成 Train/Valid 全量 Token 长度扫描和 LLaMA-Factory packed cache，并冻结两份可在 4×RTX PRO 6000D 上分别运行三轮的全参数 SFT 入口。
+- 假设：共享完全相同的初始模型、普通原子 Token 集合和训练超参后，`GID6→SID3→[D]` 与 `SID3→GID6→[D]` 的后续差异可归因于 POI PID 内 GID/SID 的自回归位置顺序；D 对单例省略、对残余碰撞样本追加且始终位于最后。
+- 边界：本实验只完成训练输入与启动门禁，不启动正式 SFT，不读取或缓存 Test，也不产生召回指标。
+
+### 数据、代码状态与共享初始化
+
+- 两版 Train/Valid 仍为 7,586,410/597,421 行。GID-first 的 Train/Valid SHA256 为 `4a9602886f946e0b0bd8e2736058648df7803cc80ef08dc3bf9c204314293b43` / `e000f9fb5d94dd357bf73e299ed0856196fac589e7e9183006861d1e69674769`；SID-first 为 `c83fbb4b45db214551c24ac32dbd8738cbc5698923f41b488853869cce463292` / `e4432d225c13765d5ec68ea21eb7ac7aa95588786aafe74230e872397e554df4`。
+- 两版共用 `models/Qwen3-0.6B-TIGER-PID-Vocab-v1/`。原始词表 151,669，新增 5,632 个普通原子 Token 后为 157,301；Token 来源 SHA256 为 `88a1015661de3d2be47be839f661a03f7fd75cdad8d772c87a6afed17743e7ca`，扩展 Tokenizer 指纹为 `e837b0d23047e85a624a89e10e2c9f0fd7069634d2bdda96195dc7965ea419c4`。扩词映射和初始化权重 SHA256 分别为 `c847965d65b7d35ddb7e8fa9b760124bd0c0bb1d5aa05d85b5d393e7e016e786` / `bded12fe8196dc23e162242972c98f89fbb2be92cd07a3dc75d1d349c4c03f52`。
+- 代码基线提交为 `54802e6674e283722ecee00fb862530df30cef9a`，运行使用未提交工作树；`pid_order_data.py` / 数据 CLI 当前 SHA256 为 `86db75e3759127f261699acd36322b20f1d0043433dc5fe6610b4d6a1ed894de` / `3b0c00ea93291b3dbe6aedf889cab518bbbde938399c849311f04a2272426962`。两份训练 YAML SHA256 为 `89ab3f1edd7f3c1dfdb2e7c7e08af2cb7aa63c092e2ca38516c7bce876863bf9` / `588f22ef69ed9925be5c5b66b69347de570ebbf826926255f4d5ada34508115b`。
+
+### 配置、命令与环境
+
+- 两版统一采用 Qwen3-0.6B 全参数 BF16、`cutoff_len=1024`、packing、`train_on_prompt=false`、3 epoch、单卡 Train/Valid batch 8、梯度累积 16、global batch 512、学习率 `5e-5`、cosine、warmup ratio 0.03、seed/data seed 42；只允许数据注册名、Cache/输出路径、实验名和独立 master port 不同。
+- 训练入口要求恰好可见 4 张、每张显存至少 39 GiB 的 GPU；4×RTX PRO 6000D 满足门禁，4×A100 40GB/80GB 也可使用。两个任务应作为独立四卡平台任务启动，不能同时争用同一组四卡。
+- 环境为 Python 3.10.20、LLaMA-Factory 0.9.4、Transformers 4.52.4。受限沙箱内首次构建在 Hugging Face Datasets 多进程 Manager 创建本地 socket 时失败，未产生正式 Cache；按工作流切到允许本地 IPC 的相同服务器环境后，两版全量构建均以退出码 0 完成并原子发布。
+
+~~~bash
+python scripts/sft/validate_tokenization.py \
+  --model-dir models/Qwen3-0.6B-TIGER-PID-Vocab-v1 \
+  --train-file data/sft/<stem>/train.jsonl \
+  --valid-file data/sft/<stem>/valid.jsonl \
+  --output-dir data/sft/tokenized/<stem> \
+  --train-dataset <stem>_train \
+  --valid-dataset <stem>_valid \
+  --cutoff-len 1024 \
+  --workers 8 \
+  --mapping-filename poi_token_mapping.json
+
+DRY_RUN=1 bash launchers/run_train_tiger_pid_gid6_sid_4gpu_3epoch.sh
+DRY_RUN=1 bash launchers/run_train_tiger_pid_sid_gid6_4gpu_3epoch.sh
+~~~
+
+### 全量门禁结果
+
+| 项目 | `GID6+SID3+[D]` | `SID3+GID6+[D]` |
+|---|---:|---:|
+| 原始 Train / Valid | 7,586,410 / 597,421 | 7,586,410 / 597,421 |
+| packed Train / Validation | 1,530,367 / 114,303 | 1,530,367 / 114,303 |
+| smoke 原始 Train / Valid | 10,000 / 2,000 | 10,000 / 2,000 |
+| smoke packed Train / Validation | 2,015 / 381 | 2,015 / 381 |
+| Input Token 最大值 | 978 | 978 |
+| Target Token P50 / P90 / Max | 13 / 14 / 14 | 13 / 14 / 14 |
+| 总 Token P50 / P90 / P99 / Max | 178 / 365 / 405 / 991 | 178 / 365 / 405 / 991 |
+| 超过 1,024 / Assistant 目标截断 | 0 / 0 | 0 / 0 |
+| Cache 大小 | 35,445,940,080 bytes | 35,445,940,080 bytes |
+| Cache Manifest SHA256 | `b74c327d...ccb1f3` | `632fa4f5...07d88` |
+
+- Train+Valid 共 8,183,831 行；4,816,937 行超过旧的 128 Token，占 58.8592%，因此本实验必须保持 `cutoff_len=1024`，不能回退旧的短上下文配置。
+- 两版长度分布、packed 行数、smoke 行数和 Cache 字节数完全一致；Cache Manifest 中模型路径、Tokenizer 指纹、Train/Valid 文件哈希、packing、模板和 cutoff 均与当前输入逐项一致，且 split 只包含 Train/Valid。
+- 两份 launcher 的 `bash -n`、可执行位、模型/Cache 契约检查和 `DRY_RUN=1` 均通过；dry-run 生成的 resolved config 只在实验名、数据/Cache/输出路径和 master port 等预期字段上不同，未启动 `torchrun`。为保证本机可复现，dry-run 会跳过平台 OFS 挂载和 GPU 门禁；正式运行仍保留原平台挂载流程并执行四卡显存检查。
+
+### 产物、结论与下一步
+
+- 正式 Cache 位于 `data/sft/tokenized/tiger_bge_m3_1024x3_{gid6_sid,sid_gid6}_dedup_history10_query_gid_v1/`；两份 Cache 各约 34 GiB，包含 packed Train/Validation、固定 smoke、长度统计和输入指纹，不含 Test。
+- 训练配置为 `configs/sft/tiger_bge_m3_1024x3_{gid6_sid,sid_gid6}_dedup_history10_query_gid_v1.yaml`；平台入口为 `launchers/run_train_tiger_pid_{gid6_sid,sid_gid6}_4gpu_3epoch.sh`。launcher 属于本地平台文件，继续由 Git 忽略。
+- 训练前门禁已通过，但截至本实验记录时没有 checkpoint、Validation Loss 或召回结果。下一步是在两个独立的 4×6000D 平台任务中分别执行 launcher；两边三轮都完成后，再使用同一固定 Validation 10k、相同 Beam/约束协议比较 exact PID 与去掉 D 后的 Bucket 召回。
+
+## EXP-20260901-01 两种 PID 顺序 epoch-3 固定 10k 双解码评测准备
+
+### 目标、训练产物与评测合同
+
+- 目标：只比较 `EXP-20260831-01` 两个三轮 SFT 的 epoch-3 checkpoint，在同一固定 10,000 条 Validation、Beam=10 下同时给出无约束与全目录合法路径约束结果。四项评测并行分配到 4 张 RTX PRO 6000D，每项独占一张卡。
+- GID-first 使用 `outputs/sft/tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1_gpu4_e3/checkpoint-8967`，epoch 3 Validation Loss 为 `0.20180898904800415`，模型 SHA256 为 `c05c9eca00655f7672d517a5aecb13d42858530b42dc694cbe84f2f428a40b50`。
+- SID-first 使用 `outputs/sft/tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1_gpu4_e3/checkpoint-8967`，epoch 3 Validation Loss 为 `0.2122611254453659`，模型 SHA256 为 `2bb46c2afe601bdd9c2abe415482a3700633ea0e32050c2d818eb534d4bede6e`。
+- 固定子集继续复用 TIGER 合法路径实验的 10,000 个 `order_id + searchid` 业务键，业务键 SHA256 为 `28636f76b43586c9583bdbccf145194908fdbbff81cfa5ffb2dd383d332b9d50`。两版逐条对齐后目标 POI 不一致数均为 0；GID-first/SID-first 子集 SHA256 分别为 `186f8792102bff8630f688a5da7949c96b43ac48729025509953da1f62fa5fc6` / `8a61d6b0ee4881fe34b3d33568060c29feae26bfeabafc630e7a1bd32e2b96c7`。
+- 无约束模式保留非法候选原始 Beam 槽位并按 miss 处理；约束模式只允许冻结全目录中存在的完整 PID。两种 PID 均允许单例省略 `D`、碰撞项追加 `D`，因此目标是带 wrapper 的 9/10 个内部 Token 变长路径，不能复用只接受固定四层 TIGER ID 的旧 evaluator。
+
+### 实现、Trie 与四卡入口
+
+- `scripts/tiger/evaluate_pid_order_retrieval.py` 新增两种顺序的统一 evaluator，严格核验 checkpoint step/epoch、Tokenizer、mapping、固定业务键与目标 POI，并支持分块原子进度、断点续跑和 CUDA OOM 时逐级降低 batch。
+- `src/poi_gr/pid/trie.py` 与 `scripts/pid/build_trie.py` 支持 `gid_sid` / `sid_gid` 两种列序。两棵 Trie 均覆盖 2,337,178 个唯一叶子；GID-first/SID-first 的加载内存分别为 125,992,320 / 265,037,568 bytes，manifest SHA256 分别为 `9e33c2e9f028ad2fa51cffff36a055589a9f9f7da0e63f553a30f973423067a7` / `58a53b172e0b502d4898e86eb148e39f9c1141dd44d74a47fd02795d40097925`。
+- 四卡入口为 `launchers/run_evaluate_tiger_pid_order_epoch3_fixed10k_4x6000d.sh`。GPU 0/1 分别运行 GID-first 无约束/约束，GPU 2/3 分别运行 SID-first 无约束/约束；每项使用 batch 64、chunk 500、`cutoff_len=1024`，最终汇总到 `outputs/eval/pid_order_fixed10k_v1/epoch3_comparison_4x6000d.json`。
+
+~~~bash
+cd /ofs/map_search/hudan/poi_genret
+bash launchers/run_evaluate_tiger_pid_order_epoch3_fixed10k_4x6000d.sh
+~~~
+
+### 门禁状态与边界
+
+- 两版固定子集预检、两棵全库 Trie、四项各 32 条的 GPU smoke 均通过；两个约束 smoke 的 Valid ID Rate 均为 100%。32 条结果只用于验证结构、mapping 和解码链路，不作为方法结论或正式指标。
+- 单卡正式 GID-first 无约束任务在用户决定改用四卡平台后已停止，停止时 `next_line=0`、`sample_count=0`，没有提交任何正式样本或指标；零进度状态可由四卡入口安全覆盖。
+- launcher 的 `bash -n` 和 `--dry-run` 已通过，相关 trie/evaluator 单元测试通过。正式四项 10k 尚未运行，因此本节不提前报告或推断 GID-first 与 SID-first 的优劣；平台任务完成后再把汇总指标补入本节。
+- 首次 4×6000D 平台运行中，两项约束评测完整完成 10,000 条；GID-first/SID-first 的 HR@1/HR@10/NDCG@10 分别为 `50.31%/86.51%/69.2316%` 与 `49.60%/85.55%/68.3797%`，两者均为 100,000/100,000 个合法候选。两个无约束进程在推理前因同一顺序共享固定名 `.preflight.json.tmp` 发生并发竞争而退出，因此平台总任务为 failed，未生成四项汇总；该失败不污染两份约束结果。
+- 修复后 JSON 原子写入为每个进程创建唯一临时文件，正式 batch 由发生过 OOM fallback 的 64 固定为 32；两个真实 evaluator 进程并发写同一 GID-first preflight 均以退出码 0 完成，最终 JSON 合法且无临时文件残留。launcher dry-run 已确认自动跳过两份完整约束结果，只补跑 GPU 0 的 GID-first 无约束与 GPU 2 的 SID-first 无约束；正式补跑待平台重新启动。
+
+## EXP-20260904-01 活跃闭集 TIGER `512³` 的 500k 初始化对照
+
+### 目标、数据与协议
+
+- 目标：把 TIGER 的 POI 目录由北京全量 2,337,178 条切换为两周全部目标与保留历史涉及的 716,245 条活跃闭集，统一使用三层 `512×512×512` RQ-VAE，先验证缩库后的原始 TIGER 训练链路。
+- 活跃目录 manifest SHA256 为 `dc13c3f137c57ba715f129ff2ccbbd8909d910da3cebc4a9fdbce2172f4d144a`，POI ID SHA256 为 `8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81`。同一 `models/bge-m3` 以 BF16、batch 64、长度 512、L2 normalize 重新编码为 `[716245,1024]` float16；Embedding manifest / NPY SHA256 为 `5fb22053cd5076d7d8ece031e9ea2b4ba024bf41d5f37f26fc0ffd6b08860855` / `4e12642ff52abce3c8700f69157582adfe448ab524184317458e3337da8b1b5a`。全量 finite 与 ID 对齐通过，随机 128 行相对旧全库向量的平均/最小余弦为 `0.99999547/0.99991328`。
+- RQ-VAE 保持 TIGER 的 `1024→512→256` encoder、三层 residual quantization、逆向 decoder、seed 42、batch 4096、Validation 1%、AdamW `3e-4`、20 epoch；本对照按旧默认仅从 709,082 个 Train POI 中无放回采 500,000 条进行逐层 FAISS-GPU KMeans 初始化。
+- 代码基线提交为 `54802e6674e283722ecee00fb862530df30cef9a`，运行使用未提交工作树；环境为 Python 3.10.20、PyTorch 2.9.1+cu128、RTX A6000。正式命令为 `python scripts/sid/train_rqvae.py --config configs/sid/rqvae_tiger_bge_m3_active_716k_512x3.yaml --experiment TIGER-ACTIVE716K-BGE-M3-512x3`。
+
+### 结果、产物与决策
+
+- 任务退出码为 0，20 epoch 全部完成，训练段耗时 249.64 秒；三级 KMeans 初始化均使用 512/512 个码且无死码，初始化 MSE 为 `0.00212247/0.00169620/0.00143591`。
+- Epoch 20 Train/Validation reconstruction cosine 为 `0.844451/0.845738`；Validation 三级码字利用为 `199/501/483`，7,163 条监控样本的三层 SID 唯一率为 `98.9809%`、碰撞 POI 为 `1.9266%`、最大桶为 4。这里只是 Validation monitor，尚未导出 716,245 条全量 SID，不能当作最终静态指标。
+- Checkpoint / resolved config SHA256 为 `cb460a102d0442976b022afbc9c41b3ac086d9f1e6931e86ec4cec316ed94bc0` / `c05da15eeb923a85e97f7da1536f4538016b84c8f456853ca22b38bdfe3d9b52`；产物在 `outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3/`，日志在 `outputs/run_control/tiger_active716k_512x3/train.log`。
+- 用户确认 SID 构建不涉及 query/订单监督，要求 KMeans 使用全部 716,245 条目录向量。该对照完整保留但不再导出 identifier；下一版显式采用 `sample_scope=all`，Validation 仅用于观察曲线，不从 KMeans 初始化池中扣除。
+
+## EXP-20260904-02 活跃闭集 TIGER `512³` 全目录初始化与唯一标识
+
+### 目标、数据与泄露边界
+
+- 目标：在 716,245 条活跃闭集 POI 上按原始 TIGER 流程训练三层 `512×512×512` RQ-VAE，但 KMeans 初始化直接覆盖全部目录向量，不从初始化池扣除 1% reconstruction monitor；完成全量 SID 导出，并追加确定性碰撞 Token 得到可供后续 SFT 使用的四层唯一标识。
+- 输入继续使用 `data/beijing_poi_active_order14d_history10_20260715_json/` 和 `outputs/embeddings/beijing_poi_active_order14d_history10_bge_m3/`；目录/POI ID/Embedding manifest/Embedding NPY SHA256 分别为 `dc13c3f137c57ba715f129ff2ccbbd8909d910da3cebc4a9fdbce2172f4d144a`、`8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81`、`5fb22053cd5076d7d8ece031e9ea2b4ba024bf41d5f37f26fc0ffd6b08860855`、`4e12642ff52abce3c8700f69157582adfe448ab524184317458e3337da8b1b5a`。
+- 此阶段只读取 POI 名称、地址和别名编码得到的 BGE 向量，不读取 query、订单标签、Train/Valid/Test 归属或召回答案，因此全目录 KMeans 不构成下游 SFT/召回评测的信息泄露。需要单独标明的是：7,163 条 1% Validation 也参与 KMeans 初始化，所以该 reconstruction Validation 只用于同目录训练曲线监控，不能宣称为对初始化严格未见的泛化集。
+
+### 实现、配置与运行
+
+- `initialization.sample_scope=all` 显式定义初始化池为全部 716,245 行；当 `sample_size` 覆盖整个池时，按目录行序完整使用，实际初始化索引为 `0…716244`，SHA256 为 `3ff99cf4dda7e338504b61aad1ac9e2732b570db975c1393d209df587ed0c349`。默认 `train` 行为保持向后兼容，已有实验配置签名不变。
+- 其余配置保持 TIGER：BGE-M3 1024 维输入，`1024→512→256` encoder，三层 residual quantization，逆向 decoder，seed 42、batch 4096、AdamW `3e-4`、20 epoch、Validation 1%。正式配置 SHA256 为 `ceb6340ee90a96057c4f077187b21f4f78b443688063c76497eb568f9e915a79`；环境为 Python 3.10.20、PyTorch 2.9.1+cu128、RTX A6000。
+- 新增的全目录/默认 Train 初始化范围测试连同现有 RQ-VAE 测试共 14 项通过；8,192 行合成 smoke 验证全池与 Validation 存在交集、三层初始化无死码并能完成训练。正式训练、全量导出和 identifier 构建均以退出码 0 完成。
+
+~~~bash
+python scripts/sid/train_rqvae.py \
+  --config configs/sid/rqvae_tiger_bge_m3_active_716k_512x3.yaml \
+  --experiment TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT
+
+python scripts/sid/export_rqvae.py \
+  --checkpoint outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/checkpoint_epoch_20.pt \
+  --run-dir outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT \
+  --output-dir outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/evaluations/epoch_20 \
+  --device cuda --batch-size 4096
+
+python scripts/tiger/build_identifiers.py \
+  --sid-manifest outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/evaluations/epoch_20/sid_manifest.json \
+  --output-dir outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/tiger_ids/epoch_20
+~~~
+
+### 训练、SID 与标识结果
+
+- 三级 KMeans 均使用 716,245/716,245 条向量、512/512 个码且无死码，初始化 MSE 为 `0.00212182/0.00169604/0.00143159`；初始化耗时 52.45 秒，20 epoch 总训练段耗时 250.31 秒。Epoch 20 Train/Validation reconstruction cosine 为 `0.844073/0.845426`，Validation monitor SID 唯一率为 `99.1065%`。
+- 相比 `EXP-20260904-01` 的 500k Train 初始化，三级初始化 MSE 分别下降约 0.0307%/0.0095%/0.3007%，Validation monitor SID 唯一率提高 0.1256pp；变化很小，说明 500k 已足够稳定，但本版更符合“目录全量构建”的定义。由于 monitor 参与初始化，reconstruction cosine 不用于两版优劣的泛化结论。
+- 全量三层 SID 共 551,731 个不同组合，唯一率 `77.0310%`；碰撞 excess 164,514（`22.9690%`），241,934 个 POI 位于碰撞桶（`33.7781%`），77,420 个碰撞桶，桶大小 P50/P90/P95/P99/Max 为 `1/2/3/6/152`。三级最终码字利用为 `229/512`、`506/512`、`491/512`，利用率 `44.73%/98.83%/95.90%`。
+- 第四层 `C` 在每个三层 SID 桶内按 `poi_id` 字典序从 0 稳定编号，跨桶复用；需要 152 个 Token，最大 `C=151`。最终 `[S1,S2,S3,C]` 为 `[716245,4]` int32，716,245 个标识全部唯一，前三列逐行等于导出的 SID，第四列逐行等于 collision code。
+
+### 产物、结论与下一步
+
+- 正式 run 位于 `outputs/sid/tiger/active_716k_bge_m3/TIGER-ACTIVE716K-BGE-M3-512x3-FULLINIT/`；epoch-20 checkpoint / resolved config SHA256 为 `5f01b5b23463b0645dfca1fc2665f104357feccec8bd3a25c96937f6f4f9a2f9` / `250e226f1ae7e48f80808726468e719b3f73ac7e5d19f5696d4634f95f27dc89`。
+- 全量 SID manifest / NPY SHA256 为 `ba6738dd72d9eb6ab91470586809930d7a0cfa14a99a81b9c94e22add8caf52e` / `c6072dbeb622eae94f28ee28b0065693840680305c8d70a0d501172ec9d61c6d`；TIGER identifier manifest / NPY / mapping SHA256 为 `43833a58f2e0ac579f2c589d0da6fa562e4105b1f52896d8644f07f565fa06b8` / `70f13cc5e760fbd90de8ca73fd9263bc04f25bc123fdec2ce432bdacbe8f9880` / `33d4e820f0d818d5a1d2d3b0290ef30f9a3254999b651e1f8f6293b48819e5b8`。
+- 本版作为 716,245 活跃闭集的新 TIGER SID 基线冻结；后续应基于该四层映射重建与原 TIGER 完全同协议的 SFT Train/Valid/Test，再用固定 Validation 10k 做无约束与合法路径约束评测。不能把缩库后的 SID 静态唯一率直接与旧 2,337,178 目录的数值作方法提升结论。
+
+## EXP-20260905-01：活跃闭集 TIGER 三轮 SFT 输入与六项评测入口
+
+### 数据、Token 门禁与训练配置
+
+- 日期：2026-09-05；状态：正式训练入口已就绪，尚未产生 checkpoint。基于 `EXP-20260904-02` 的 `[S1,S2,S3,C]` 唯一标识重建原 TIGER history10 协议数据，Train/Valid/Test 仍为 `7,586,410/597,421/606,682`，不按训练目标再次裁剪；全部目标和历史 POI 均由 716,245 活跃目录覆盖。Messages 位于 `data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1/`，manifest SHA256 为 `80d39eb00269baffe0b5c72aa9ecbcaf6d832b3f52e18329390adceabaf088a1`；
+- 扩词模型位于 `models/Qwen3-0.6B-TIGER-Active716K-512x3-Vocab-v1/`，Token mapping / tokenizer JSON SHA256 为 `5f45209ffcf45fb9691c2d1ad369bc2fde2c206a356407c50baa2afa01ae6cdb` / `78081f50b24803c490bf53d20d95adf346aec662dd7dc6258dd1c05c05a925ff`；
+- Train+Valid 共 8,183,831 条完成 `cutoff_len=1024` 全量长度门禁：完整序列最大 953、目标长度固定 8、超长和 Assistant 目标截断均为 0。packed cache 位于 `data/sft/tokenized/tiger_active716k_bge_m3_512x3_history10_query_gid_v1/`，Train/Validation 为 `1,296,883/96,949`；cache manifest SHA256 为 `e62c82201e8080ac0bb84277ea7d8761f8568ab50b3958af035b555b1a8d29e7`，缓存构建与 supervisor 退出码均为 0；
+- 正式配置为 `configs/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1.yaml`：Qwen3-0.6B 全参数 SFT、4×RTX PRO 6000D、单卡 batch 8、累积 16、global batch 512、BF16、seed 42、三轮；按 1,296,883 packed rows 计算为每轮 2,533 step，epoch 3 固定 `checkpoint-7599`。
+
+### 一键入口与当前结论
+
+~~~bash
+cd /ofs/map_search/hudan/poi_genret/launchers
+bash run_train_tiger_active716k_512x3_4x6000d_3epoch.sh
+~~~
+
+- launcher 已完成全链路 dry-run：训练结束后会先核验三个 epoch checkpoint，再只评 epoch 3；固定同业务键 Validation 10k 同时执行无约束 Beam=10 和全目录合法路径约束，并继续执行四个冻结泛化 10k（已见 Query/未见 Query–POI、新 Query/已见目标、长尾目标、冷目标），最终汇总六项结果；
+- 当前只确认“可安全启动正式训练”，没有记录任何臆测的 Loss、HR 或 NDCG。若输出目录已经出现 checkpoint，launcher 的恢复/拒绝覆盖逻辑应按实际状态执行，不得把新任务隐式混入旧 checkpoint。
+
+## EXP-20260908-01：活跃闭集 TIGER 三轮 SFT 与中止的六项评测
+
+### 训练、故障与恢复
+
+- 日期：2026-09-07—08；状态：三轮 SFT 完成，固定 10k 双解码完成，四个泛化评测按用户要求中止。数据、Tokenizer、SID 和训练配置沿用 `EXP-20260905-01`；代码基线为 `54802e6674e283722ecee00fb862530df30cef9a`，运行时工作树有未提交改动；
+- 4×RTX PRO 6000D、BF16、单卡 batch 8、累积 16、global batch 512，共完成 7,599 step。epoch 1/2/3 Validation Loss 为 `0.440864/0.347435/0.335524`，最终 checkpoint 为 `outputs/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7599`，模型 SHA256 为 `008f0011686fc2bb4e71be9cf746fd41d17c187e1c7b3282ebbc11f6cae24c35`；
+- 平台任务在训练成功后显示 failed，并非模型或 checkpoint 失败：LLaMA-Factory 多卡 launcher 以 `sys.exit(0)` 结束，使外层 `scripts/sft/train.py` 未执行 `epoch_checkpoints.json` 写入；后置检查因此退出。三个 epoch checkpoint 均完整，索引已由相同校验函数补建；
+- 2026-09-08 在单张 RTX A6000 上按原六项协议顺序补评。32 条 smoke 退出码为 0、峰值显存 16,567,435,776 bytes；固定 10k 无约束和合法路径约束均完成。运行到首个泛化单元、尚未提交任何正式候选分块时，用户要求不再占用本服务器，精确 runner 进程组以 SIGTERM 停止，记录为退出码 143；MMBERT 和其余泛化单元未由该 runner 启动。
+
+### 已完成的固定 10k 结果
+
+| 解码 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID Rate |
+|---|---:|---:|---:|---:|---:|---:|
+| 无约束 Beam=10 | 49.78% | 73.58% | 79.79% | 84.51% | 68.0496% | 74.769% |
+| 全目录合法路径约束 | 49.79% | 73.72% | 80.07% | 85.08% | 68.2633% | 100% |
+
+- 相对旧 233 万目录 TIGER 的固定 10k 无约束 `51.87%/87.16%/70.4190%`，活跃闭集的 HR@1/HR@10/NDCG@10 分别低 `2.09/2.65/2.3694pp`。本次同时改变目录、码本容量、SID 和训练目标分布，差值不能归因为单一“缩库”因素；
+- 合法路径约束相对自身无约束仅提高 HR@1/HR@10/NDCG@10 `0.01/0.57/0.2137pp`，说明当前主要差距不是非法组合。四类泛化和 active-MMBERT 配对生成指标尚未完成，不能形成最终方法排名；
+- 正式结果位于 `outputs/eval/tiger_active716k_bge_m3_512x3_history10_query_gid_v1_gpu4_6000d_e3/`；中止状态和日志位于 `outputs/run_control/active716k_pair_eval/`。后续若继续，只允许在训练平台复用现有 `checkpoint-7599` 补跑缺失单元，不重训、不在本服务器恢复。
+
+### 2026-09-09：A100 泛化补评闭环
+
+- 复用同一 `checkpoint-7599` 在训练平台完成此前缺失的四个无约束泛化 10k；四项均为 `completed`、各 10,000 条，Test 未读取。四个集合与 active-MMBERT 使用完全相同的业务键顺序，target mismatch 为 0；本次 A100 launcher 自动跳过已有的两项固定 10k，因此固定结果仍来自 2026-09-08 的单卡 A6000，四项泛化是严格同卡型 A100 配对结果；
+
+| Validation 切片 | HR@1 | HR@3 | HR@5 | HR@10 | NDCG@10 | Valid ID Rate |
+|---|---:|---:|---:|---:|---:|---:|
+| 已见 Query / 未见 Query–POI | 16.88% | 35.65% | 44.55% | 53.45% | 34.3798% | 74.517% |
+| 新 Query / 已见目标 | 43.43% | 59.47% | 64.82% | 69.55% | 56.6535% | 59.479% |
+| 长尾目标（Train 频次 1—5） | 15.74% | 24.85% | 29.72% | 36.58% | 25.2097% | 54.381% |
+| 冷目标（Train 频次 0） | 4.45% | 6.06% | 7.16% | 9.48% | 6.5527% | 49.189% |
+| 四类宏平均 | 20.1250% | 31.5075% | 36.5625% | 42.2650% | 30.6989% | 59.3915% |
+
+- 相对旧 233 万目录 TIGER 的四类宏平均 `24.9925%/51.3700%/37.6949%`（HR@1/HR@10/NDCG@10），active 版本分别下降 `4.8675/9.1050/6.9960pp`。结合固定 10k 的同步下降，缩小到 716,245 条活跃目录并未自动改善生成检索；本次还同时把三层容量改为 `512³` 并重训 SID/SFT，因此只能将其记录为整个 active-BGE 配方的负结果，不能把下降单独归因于缩库；
+- 完整六项汇总为 `outputs/eval/tiger_active716k_bge_m3_512x3_history10_query_gid_v1_gpu4_6000d_e3/epoch3_evaluation_summary.json`，SHA256 为 `7200b9dc02d4f4f98218da0f4dd4921bfb6d5841d6fbfc4f7d6cb673bab2e235`。

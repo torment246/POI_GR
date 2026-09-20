@@ -1,0 +1,40 @@
+schema_version: qg-prqk-p5-canonical-config-v1
+protocol_id: hard60_topk5_v1
+scope: P5-CAT
+
+# 冻结旧 downstream 配置；不原地修改，以保留 P4 和历史 P5 manifest 的签名。
+base_downstream_config: qg_prqk_v2_1_category_active_512x3.yaml
+base_downstream_config_sha256: a34b5cfd531d84fae14aa719d6546ff23da577830d48665a9529e74f46bd2ac5
+base_downstream_signature: b4bc8a786841faf3dcedff375f4e7390efbafec54df14f27a2c3b540e4ed42c2
+
+output_subdir: poi_prqk_a0_hard60_topk5_v1
+
+prqk:
+  metric: cosine
+  init: kmeans++
+  seed: 42
+  remove_global_direction: true
+  residual: projection
+  min_iter: 8
+  max_iter: 60
+  objective_rel_tol: 1.0e-4
+  poi_assignment_change_tol: 1.0e-3
+  query_assignment_change_tol: 2.0e-3
+  patience: 2
+  topk_refinement:
+    enabled: true
+    topk: 5
+    beta: 15
+    max_iter: 5
+
+# 2026-09-08 用户确认的参数选择证据；只读绑定，不作为新 Gate 的输出。
+selection_evidence:
+  medium100k_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0/medium_100000/manifest.json
+    sha256: 8ccaf6383e1a89c62780190f96222fac6a6d2508002bc5af30f7c7dc0cbdf3d0
+  hard_endpoint_diagnostic_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0/diagnostics/medium_100000_hard_endpoint_v1/manifest.json
+    sha256: 00bb291a4f58ed37788382ae7d5abd70ee9294a0749c41c27277afe82d8f1e29
+  hard60_topk5_diagnostic_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0/diagnostics/medium_100000_hard60_topk5_v1/manifest.json
+    sha256: f33bf2573c141b2ae47bf5e578be3cbe0debd0aed03f23e834a9c982814dbd90

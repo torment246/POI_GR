@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
         help="Trie 输出目录。",
     )
     parser.add_argument(
+        "--pid-order",
+        choices=("gid_sid", "sid_gid"),
+        default="gid_sid",
+        help="Trie 内部 PID 顺序；默认保持原 GID-first 协议。",
+    )
+    parser.add_argument(
         "--skip-input-hashes",
         action="store_true",
         help="仅用于技术调试；跳过大型输入文件 SHA256 复核。",
@@ -68,6 +74,7 @@ def main() -> int:
             _resolve(args.pid_manifest),
             _resolve(args.tokenizer),
             _resolve(args.output_dir),
+            pid_order=args.pid_order,
             verify_hashes=not args.skip_input_hashes,
             progress=lambda message: print(message, file=sys.stderr, flush=True),
         )

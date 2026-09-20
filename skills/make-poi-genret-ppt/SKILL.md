@@ -1,6 +1,6 @@
 ---
 name: make-poi-genret-ppt
-description: Create or edit POI generative-retrieval project PowerPoint files (.pptx) in the established Hu Dan 0727/0810 phase-report style. Use for new progress decks, extending an existing report, converting experiment records into slides, or restyling draft slides. Enforce template reuse, restrained colors, table-first experiment reporting, no decorative boxes or unsupported square glyphs, evidence-backed metrics from docs/outputs, and before/after PPTX validation.
+description: Create or edit POI generative-retrieval project PowerPoint files (.pptx) in the established Hu Dan 0727/0810 phase-report style. Use for new progress decks, extending an existing report, converting experiment records into slides, or restyling draft slides. Use tables for experiment results and flows or architectures for methods, with uniformly black major titles. Enforce template reuse, restrained colors, no decorative boxes or unsupported square glyphs, evidence-backed metrics from docs/outputs, and before/after PPTX validation.
 ---
 
 # POI GenRet 汇报 PPT
@@ -12,7 +12,7 @@ description: Create or edit POI generative-retrieval project PowerPoint files (.
 3. Inspect both canonical decks on every PPT task:
    - `/ofs/map_search/hudan/poi_genret/PPT/胡丹-0727.pptx`
    - `/ofs/map_search/hudan/poi_genret/PPT/胡丹-0810.pptx`
-4. Treat `0810` as the final visual-density and formatting authority. Use `0727` for the original template language and reusable layouts. If the user supplies a newer deck or PDF, treat that artifact as the content authority while retaining the established style.
+4. Use `0810` for visual density and restrained formatting, and `0727` for the original template language and reusable layouts. The current rules below override historical examples: major titles are black, results use tables, and methods use flows/architectures. If the user supplies a newer deck or PDF, treat that artifact as the content authority.
 5. Edit the matching PPTX. Use a PDF only for visual/page comparison; do not rebuild from PDF when an editable PPTX exists.
 
 Before editing, state the current step, what will not change, and the acceptance criteria. Do not modify experiments or project documents merely to make a slide.
@@ -22,15 +22,15 @@ Before editing, state the current step, what will not change, and the acceptance
 - Use formal experiment documents as the primary narrative source and `outputs/` metrics, manifests, and logs for verification.
 - Never infer missing metrics or describe a stopped/failed run as successful. Distinguish Trainer success from an outer platform-wrapper failure.
 - Keep comparison cells protocol-compatible. State important limitations such as fixed 10k Validation, method-specific constrained decoding, or missing Test results.
-- Lead each slide with one conclusion. Use tables for repeated metrics and exact mappings; use prose only for interpretation.
+- Lead each slide with one conclusion. Choose the visual by content: tables for results, dataset statistics and exact comparisons; flows for method steps, architectures for module interactions, and timelines for training stages. Use concise prose for interpretation and simple conclusions. Do not turn a method into a table merely because its description has multiple parts.
 - Speaker notes are not part of the default deliverable. Do not create, expand, or rewrite notes unless the user explicitly asks for notes in that task; simplify or split overloaded visible content instead.
 
 ## Preserve the validated visual language
 
 1. Start from the closest existing slide in `0810` or `0727`; duplicate and replace content instead of inventing a new layout.
 2. Preserve the 16:9 slide size, master, theme, title position, page-number treatment, margins, fonts, and restrained palette.
-3. Prefer text plus tables. Use a diagram only when relationships cannot be understood from a short paragraph or table.
-4. Do not surround sections with rectangles. Do not add card grids, black-outline boxes, decorative frames, colored badges, gradients, shadows, stickers, emoji, or ornamental icons.
+3. Set every major title, including cover and section titles, explicitly to black (`#000000`); do not inherit a historical navy title. Keep method content flow-first: show inputs, transformations, outputs, and meaningful branches or feedback. Use native editable PowerPoint objects and connectors.
+4. Do not surround ordinary text sections with rectangles or make decorative card grids. Minimal white/light-gray process nodes with thin gray lines are allowed when they represent actual modules or states; arrows must express real data flow, dependencies or sequence. Do not add black-outline boxes, decorative frames, colored badges, gradients, shadows, stickers, emoji, or ornamental icons.
 5. Do not use uncommon Unicode bullets or symbols that can render as small black outlined squares. Use plain Chinese text, standard punctuation, or the template's native bullet formatting.
 6. Reuse the table style from `0810`: quiet gray header, white/light alternating rows, and at most one pale-blue highlight for the selected result.
 7. Keep the deck visually calm. Do not introduce a new accent color merely to differentiate methods.
@@ -43,6 +43,7 @@ For exact palette, typography, table, layout, and notes rules, follow [reference
 
 - Reuse the nearest slide structure and remove unused objects instead of hiding them outside the canvas.
 - Keep one primary table or one primary visual per results slide when possible.
+- Method pages should make direction and dependencies visible, not repackage table rows as disconnected boxes. A simple explanation or summary can remain plain text; not every page needs a diagram.
 - Split dense content across slides before reducing body text below the established template size.
 - Preserve user-edited wording unless the user explicitly requests copyediting.
 
@@ -72,7 +73,7 @@ For exact palette, typography, table, layout, and notes rules, follow [reference
      <output.pptx>
    ```
 
-3. Inspect every slide visually when rendering is available. Check clipping, overlap, inconsistent alignment, tiny text, excess colors, outlined rectangles, and tofu/square glyphs.
+3. Inspect every slide visually when rendering is available. Check clipping, overlap, inconsistent alignment, tiny text, excess colors, decorative outlined rectangles, and tofu/square glyphs. Verify all major titles are black and method flows have readable direction, functional connectors and no table-like card grid. If only a geometry preview is available, disclose that it is not an Office rendering.
 4. For notes-only work, require canonical slide body hashes and shape counts to match the baseline.
 5. Report the output path, page count, substantive additions, validation result, current limitation, and commit/push status.
 

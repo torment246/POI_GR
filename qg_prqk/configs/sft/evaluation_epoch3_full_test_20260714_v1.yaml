@@ -1,0 +1,11 @@
+schema_version: qg-prqk-full-test-config-v1
+split: test
+date: '2026-07-14'
+source_rows: 606682
+# 只继承既有模型、Tokenizer、Final ID 和生成参数，不读取 Validation 样本。
+validation_protocol: qg_prqk/configs/sft/evaluation_epoch3_fixed10k_generalization_v1.yaml
+validation_protocol_sha256: 921fc45205fc222c2997826e95e09339feca8f543ea7695b17749c0485fea1ed
+output_root: qg_prqk/outputs/eval/sft_epoch3_full_test_20260714_v1
+checkpoint_sha256:
+  a4_gid_parent: fa24f17687b1c89876abb5bde57abe94865f7fc62d72b9b08649e49f179d81b7
+  a4_nogid: b544f2c58ceecde3940dd44d1b9ee652d2889dd5f7551b3349cd2046762f71ca

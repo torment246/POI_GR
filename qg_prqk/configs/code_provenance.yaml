@@ -1,0 +1,227 @@
+schema_version: qg-prqk-code-provenance-v1
+source_repository_commit: 54802e6674e283722ecee00fb862530df30cef9a
+entries:
+  - target: qg_prqk/src/qg_prqk/config.py
+    target_sha256: eb54acbb05581ce5315431398fed6269870e5672f10cccd8f9b0d6bc24eae23e
+    source: src/poi_gr/sid/rqkmeans.py
+    source_sha256: 1a0128989533045d56bec436f251486d0c2971b0cf962d766dea77baa8fd72dd
+    reused_symbols: [_mapping, _positive_int, _path, load_rqkmeans_config]
+    reuse_mode: adapted_copy
+    modifications: 收敛为 QG v1.1 冻结配置、qg_prqk/outputs 路径隔离、P2 Query 统计以及 P3 Query encoder/Adapter 配置和自包含数据类，不保留 RQK 算法实现。历史容量显式命名为 LEGACY_V1_CODEBOOK_SIZES，load_legacy_config 保留 load_config 兼容别名，并指向当前 sid/pipeline_config.py 的 512×3 入口；冻结 YAML 与配置签名不变。
+  - target: qg_prqk/src/qg_prqk/data/contracts.py
+    target_sha256: 1eb9d7b9aaf327b270d7abeefcdaddd6c8381764e0d7e8a309e4d74445409529
+    source: src/poi_gr/embedding/query_shards.py
+    source_sha256: f9c94778d626f67e18bfee12b5ad70aaec0ba58c43e896b40cd9ac0d90889c23
+    reused_symbols: [extract_train_query_target]
+    reuse_mode: adapted_copy
+    modifications: 保留正式 SFT Train 的 Query/目标解析合同，并增加 POI、Embedding、切分与 Final PID 契约。
+  - target: qg_prqk/src/qg_prqk/data/contracts.py
+    target_sha256: 1eb9d7b9aaf327b270d7abeefcdaddd6c8381764e0d7e8a309e4d74445409529
+    source: src/poi_gr/pid/dedup.py
+    source_sha256: c06b128e60a2778fa1256bcb65d1473f45ad2379c6ce46d6e72fe6ca534042d1
+    reused_symbols: [EXPECTED_BASE_PID_TOKEN_ORDER, compose_final_pid]
+    reuse_mode: adapted_copy
+    modifications: 只复制并收敛为 9/10 Token Final PID 的轻量结构校验，不实现 Dedup 分配。
+  - target: qg_prqk/src/qg_prqk/artifacts.py
+    target_sha256: 327ffa473150f0112a6e145c09b40baa7ad56c71abe015a77ab86837f840e6b4
+    source: src/poi_gr/sid/rqkmeans.py
+    source_sha256: 1a0128989533045d56bec436f251486d0c2971b0cf962d766dea77baa8fd72dd
+    reused_symbols: [_json_atomic, _sha256_file, _config_signature]
+    reuse_mode: adapted_copy
+    modifications: 改为 QG 通用 Artifact Manifest 模板和安全写入，不包含算法产物写入。
+  - target: qg_prqk/src/qg_prqk/data/query_statistics.py
+    target_sha256: 6cdc7cb169101f9a27a4ac0d25a08f64cd9674e832a0af46500fee41a7a4020d
+    source: src/poi_gr/embedding/query_shards.py
+    source_sha256: f9c94778d626f67e18bfee12b5ad70aaec0ba58c43e896b40cd9ac0d90889c23
+    reused_symbols: [stable_query_shard, _ShardWriter, _scan_train]
+    reuse_mode: adapted_copy
+    modifications: 改为 normalized Query 的 QG 专用 hash namespace，增加原始 Query 保留、Train 契约校验、有限样例标记和 qg_prqk/outputs 原子产物。
+  - target: qg_prqk/src/qg_prqk/data/query_statistics.py
+    target_sha256: 6cdc7cb169101f9a27a4ac0d25a08f64cd9674e832a0af46500fee41a7a4020d
+    source: src/poi_gr/embedding/query_stats.py
+    source_sha256: ac5434f71fbe182be0112c83f3f8039b5dd7b096a54f7c77215a8ea23a020c99
+    reused_symbols: [_aggregate_query_shard, _validate_file_group, build_train_query_stats]
+    reuse_mode: adapted_copy
+    modifications: 保留分 shard 有界内存聚合、Parquet 审计和 resume 框架，替换为 QG 置信过滤、熵、权重、false-negative mask 与确定性 Query ID。
+  - target: qg_prqk/src/qg_prqk/data/query_embeddings.py
+    target_sha256: b8b3278074b60cfe90a2e13bad86c12aea6fbe48ee85badbdc69543cba0a7112
+    source: src/poi_gr/embedding/query_encoding.py
+    source_sha256: 2108f18f8a52241e22f935652e6335c97f47bb15a06f0b905a09abcbe5aab35d
+    reused_symbols: [load_text_encoder, _chunked, encode_train_queries]
+    reuse_mode: adapted_copy
+    modifications: 改为 P2 normalized Query 按 query_id 对齐的 QG 专用 float16 NPY cache，强制无 instruction、L2 normalize、resume 和 qg_prqk/outputs 路径隔离。
+  - target: qg_prqk/src/qg_prqk/data/query_embeddings.py
+    target_sha256: b8b3278074b60cfe90a2e13bad86c12aea6fbe48ee85badbdc69543cba0a7112
+    source: src/poi_gr/embedding/core.py
+    source_sha256: bea5da7da362ee0a17553aa2bebd471bf676406b0ed519dcc303483805a90f3a
+    reused_symbols: [EmbeddingResult, _validate_embedding_file, build_embeddings]
+    reuse_mode: adapted_copy
+    modifications: 复用 embedding shape/dtype/norm 验证与原子 manifest 思路，收敛为 Query-only cache 且不更新 POI BGE。
+  - target: qg_prqk/src/qg_prqk/adapters/model.py
+    target_sha256: e4a38fb55b74bb6e64b9293a86676eb7fc24839bbc76e40e2e9ef5c5aa905f96
+    source: src/poi_gr/methods/tiger_joint/training.py
+    source_sha256: 2be4cc649d4421227fe743fe3485135e5e979e777596b7cafa96cef1c6fdd4d0
+    reused_symbols: [multi_positive_info_nce, evaluate_retrieval]
+    reuse_mode: adapted_copy
+    modifications: 改为 Query-only residual bottleneck Adapter、动态 in-batch 与固定负例共同参与的 false-negative masked weighted InfoNCE，并增加 Train-only 稳定 dev 划分、raw/adapted 固定候选评测，以及要求 overall 与困难子集同时无退化且至少 Recall@10 或 margin 改善的严格 Gate。
+  - target: qg_prqk/src/qg_prqk/sid/geo.py
+    target_sha256: 87f51fe6f3741096285bf99bfcd9f477d591b99a1be73c49e31d89c7b53bfd16
+    source: src/poi_gr/pid/geohash.py
+    source_sha256: f279d4ee3eb431f57cdbca2746e9e8ced6052039de5b56aada5f3ba57bc2dd3d
+    reused_symbols: [GEOHASH_ALPHABET, longitude_first_geohash_token_contract]
+    reuse_mode: adapted_copy
+    modifications: 复制标准 Geohash Base32 与 longitude-first 约定，在 QG 内独立实现向量化 encode/decode、GID prefix packing、北京局部五维 Geo feature、robust standardization 和 singleton zero；运行时不导入根 src/poi_gr。
+  - target: qg_prqk/src/qg_prqk/sid/identifiers.py
+    target_sha256: 0690bf4a5f50a58b7d23e9d9c92c95dbf3dd9e07ac4d02ce7cd6f22dea9dfe20
+    source: src/poi_gr/pid/dedup.py
+    source_sha256: c06b128e60a2778fa1256bcb65d1473f45ad2379c6ce46d6e72fe6ca534042d1
+    reused_symbols: [assign_dedup_ids, compose_final_pid, write_final_pid_artifacts]
+    reuse_mode: adapted_copy
+    modifications: 改为 QG 独立的 GID6+SID3 与纯 SID3 双 variant；仅在完整 Base ID 冲突桶内按 poi_id 字典序追加末位 D，输出同行同序 mapping、code arrays、metrics 和不可覆盖 manifest。
+  - target: qg_prqk/src/qg_prqk/sft/data.py
+    target_sha256: bb56ee477309d69ef317d7ff5fbdc8aabdc0904a608616099b62d04ff700b286
+    source: src/poi_gr/methods/tiger/pid_order_data.py
+    source_sha256: 86db75e3759127f261699acd36322b20f1d0043433dc5fe6610b4d6a1ed894de
+    reused_symbols: [replace_history_pid, transform_record, build_pid_order_sft_data]
+    reuse_mode: adapted_copy
+    modifications: 一次扫描冻结 history10 源数据并成对写出 A4 GID-parent 与 NoGID；通过旧 TIGER Final ID 只读反查 poi_id，保持 Query、请求 GID、样本顺序和日期切分不变，NoGID target 严格只有 S1/S2/S3 加可选末位 D。
+  - target: qg_prqk/src/qg_prqk/sft/vocabulary.py
+    target_sha256: 83de7046db9af3c63c53ed751b7f7c416197eda5219631dc098e2bb59a9fda57
+    source: scripts/pid/prepare_vocab.py
+    source_sha256: d9fec6463d70cf87a99ad8cf26391fa665f795a9f33ce2a89ab72d4bc99bb6cf
+    reused_symbols: [load_requested_tokens, verify_atomic_tokens, prepare_poi_vocab]
+    reuse_mode: adapted_copy
+    modifications: 强制两个 QG variant 使用完全相同且同序的普通原子 Token 并共享同一个确定性扩词表模型；改用 QG manifest、QG 输出路径和不可覆盖校验。
+  - target: qg_prqk/src/qg_prqk/sft/preflight.py
+    target_sha256: e64f7a9517a9471b3e14e44768c34189378f5d5f542e8a593d700bb54e761540
+    source: scripts/sft/validate_tokenization.py
+    source_sha256: a24b6390dc5da0fc8dcd9cd0f4c7660db1148db4eaceeeb0681e285e539bdc24
+    reused_symbols: [preflight_lengths, build_tokenized_cache, validate_sft_tokenization]
+    reuse_mode: adapted_copy
+    modifications: 收敛为 QG 双 variant 的 Train/Valid-only 全量扫描，固定 cutoff 1024，要求零超长和零 target truncation 后才用本地 LLaMA-Factory 构建不可覆盖 Cache；禁止读取或注册 Test。
+  - target: qg_prqk/src/qg_prqk/sft/training.py
+    target_sha256: 2c18d4be3d8484aabafc38dcd43b20143736a30544921fdcbb53e36d51a71289
+    source: scripts/sft/train.py
+    source_sha256: 4fca8d7578d7ffddcad8e2bf5c8fc409a809ce15a7c98549f615775825cd20da
+    reused_symbols: [validate_tokenized_cache_cutoff, build_training_config, launch_training]
+    reuse_mode: adapted_copy
+    modifications: 改为两个固定 QG 入口，共享 Qwen 初始模型、词表和算法超参数；启动前联检 full 数据、共同词表、1024 Cache、零截断、global batch 512、Test 禁用和 qg_prqk 路径隔离。
+  - target: qg_prqk/launchers/run_train_qg_prqk_a4_gid_parent_sft_4gpu_3epoch.sh
+    target_sha256: e938568bfb0a0f76728a9193a535f61023ca275814fe4d14f7fa943ef0247086
+    source: launchers/run_train_gnpr_sft_4x6000d_3epoch.sh
+    source_sha256: c947377afe8aeb6ecfedb4d94a305d79defcf8443f8a5167ee34f5564332d9a8
+    reused_symbols: [platform_environment, ofs_mount, four_gpu_launch]
+    reuse_mode: adapted_copy
+    modifications: 保留训练平台环境与挂载骨架，改为 QG A4 GID-parent 独立入口；同一脚本接受 4×A100 或 4×6000D，增加正式输入、显存、短 TMPDIR、输出不可覆盖、日志和退出码门禁。
+  - target: qg_prqk/launchers/run_train_qg_prqk_a4_nogid_sft_4gpu_3epoch.sh
+    target_sha256: 305751fe4f8f75f618397bd4544318aac44a4be6b468e608b73d8065339c4a03
+    source: launchers/run_train_gnpr_sft_4x6000d_3epoch.sh
+    source_sha256: c947377afe8aeb6ecfedb4d94a305d79defcf8443f8a5167ee34f5564332d9a8
+    reused_symbols: [platform_environment, ofs_mount, four_gpu_launch]
+    reuse_mode: adapted_copy
+    modifications: 保留训练平台环境与挂载骨架，改为 QG A4 NoGID 独立入口；目标严格为 S1/S2/S3 加可选末位 D，同一脚本接受 4×A100 或 4×6000D，并使用独立短 TMPDIR 与运行日志。
+  - target: qg_prqk/src/qg_prqk/sft/evaluation_data.py
+    target_sha256: 1bd8f333e93b3dff9db877a0bb0697c606ada5679bb2f52037f7c3f78c30f7c8
+    source: src/poi_gr/sft/evaluation.py
+    source_sha256: 98594c0aeee3015b42eafce5b85737d9c0c4add6f842503078b4e0ddd64af8e5
+    reused_symbols: [build_reference_aligned_validation_subset]
+    reuse_mode: adapted_copy
+    modifications: 在 QG 内按既有业务主键/顺序对齐五组冻结 Validation，一次扫描与哈希，不读取 Test、不重新抽样；输出与来源均有独立 manifest。
+  - target: qg_prqk/src/qg_prqk/sft/evaluation.py
+    target_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    source: src/poi_gr/sft/evaluation.py
+    source_sha256: 98594c0aeee3015b42eafce5b85737d9c0c4add6f842503078b4e0ddd64af8e5
+    reused_symbols: [load_lf_tokenizer_and_template, encode_prompt_like_training, load_generation_model]
+    reuse_mode: adapted_copy
+    modifications: 复制训练同模板编码和 Qwen3 单卡模型加载；绑定 QG 共同词表、末轮 checkpoint 与完整 Final ID，生成评测代码不依赖根项目实现。
+  - target: qg_prqk/src/qg_prqk/sft/evaluation.py
+    target_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    source: src/poi_gr/methods/tiger/eval.py
+    source_sha256: 70f091533b1b7dad11a815c20f9c6eceaa4dbc6df2318e864eef65b7d0655845
+    reused_symbols: [empty_metrics, update_metrics, merge_metrics, finalize_metrics]
+    reuse_mode: adapted_copy
+    modifications: 保留非法候选原始排名和 HR/NDCG 累计，改用 QG Candidate，并由同一排名直方图补充 MRR@10。
+  - target: qg_prqk/src/qg_prqk/sft/evaluation.py
+    target_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    source: scripts/tiger/evaluate_pid_order_retrieval.py
+    source_sha256: e40ac76b9be0b099c17b05f411c03a4a0ccedc638332638addd27832a608f294
+    reused_symbols: [pad_prompts, is_cuda_oom, evaluate_chunk, evaluate_mode]
+    reuse_mode: adapted_copy
+    modifications: 复制左 padding 与 OOM 判断，沿用无约束 Beam=10 和 chunk 原子断点；改为 QG 的 9/10 或 3/4 内部 ID 精确全库查表，不依赖其他方法的 Trie。
+  - target: qg_prqk/outputs/run_control/eval_launcher_archive_4x6000d/run_evaluate_qg_prqk_a4_gid_parent_epoch3_fixed10k_generalization_4x6000d.sh
+    target_sha256: d79e8c32d7d9db9aec9f137d255a2374e89759c7f92e7b49da5058241eee78d8
+    source: launchers/run_evaluate_tiger_pid_order_epoch3_fixed10k_4x6000d.sh
+    source_sha256: 50e76e140a057cdf10eafa7519e10afa84895d1c0ba415ce78b7340ea79d80bd
+    reused_symbols: [platform_environment, ofs_mount, four_gpu_launch]
+    reuse_mode: adapted_copy
+    modifications: 保留四卡 6000D 平台环境、认证、挂载与资源骨架；改为 QG 单分支五组评测，全部入口/缓存/日志在 qg_prqk，支持 CPU dry-run 与独立 GPU smoke。
+  - target: qg_prqk/outputs/run_control/eval_launcher_archive_4x6000d/run_evaluate_qg_prqk_a4_nogid_epoch3_fixed10k_generalization_4x6000d.sh
+    target_sha256: d97948674f2074c911cf275c55715e90e20207d7f57081b7d5577a174fa030a5
+    source: launchers/run_evaluate_tiger_pid_order_epoch3_fixed10k_4x6000d.sh
+    source_sha256: 50e76e140a057cdf10eafa7519e10afa84895d1c0ba415ce78b7340ea79d80bd
+    reused_symbols: [platform_environment, ofs_mount, four_gpu_launch]
+    reuse_mode: adapted_copy
+    modifications: 保留四卡 6000D 平台环境、认证、挂载与资源骨架；改为 QG 单分支五组评测，全部入口/缓存/日志在 qg_prqk，支持 CPU dry-run 与独立 GPU smoke。
+  - target: qg_prqk/launchers/run_evaluate_qg_prqk_a4_dual_epoch3_fixed10k_generalization_2x6000d.sh
+    target_sha256: 19024f6d61896c98cb79454259ab2f00fc5c592c7977e62d4c647240ed2f05ca
+    source: launchers/run_evaluate_tiger_pid_order_epoch3_fixed10k_4x6000d.sh
+    source_sha256: 50e76e140a057cdf10eafa7519e10afa84895d1c0ba415ce78b7340ea79d80bd
+    reused_symbols: [platform_environment, ofs_mount, resource_setup]
+    reuse_mode: adapted_copy
+    modifications: 继承原 QG 四卡评测入口的平台骨架，改为一台双卡 6000D、variant=both 共享队列；原两个入口移至 outputs/run_control/eval_launcher_archive_4x6000d 可恢复留存。
+  - target: qg_prqk/src/qg_prqk/sft/full_test_data.py
+    target_sha256: e88e6876f1ccc2945dc9da99f5637783a026b8676c72ee5250825393ae73ecd8
+    source: scripts/tiger/evaluate_retrieval.py
+    source_sha256: 7a2d91e52560ff959f0585514f6122b2c0310d87c78c793e75447da83e469e7c
+    reused_symbols: [JsonlRecordSequence, build_full_split_view]
+    reuse_mode: adapted_copy
+    modifications: 复制全量 JSONL 的 uint64 偏移索引与原文件视图设计；在 QG 内增加两版 Test 逐行配对、完整来源哈希和最后一天契约，不复制全量 Messages、不导入根项目实现。
+  - target: qg_prqk/src/qg_prqk/sft/full_test_evaluation.py
+    target_sha256: d8f7427f9d4ae77db39fcd5092ff5ace15d60003f037be5712db079deb5d2a0e
+    source: qg_prqk/src/qg_prqk/sft/evaluation.py
+    source_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    reused_symbols: [encode_record, evaluate_chunk]
+    reuse_mode: adapted_copy
+    modifications: 为保留已完成 Validation 的源码指纹，复制两段记录编码和生成循环，仅改 Test split 与函数命名；模型加载、精确 Final ID 解析、padding、OOM 判断和指标直接复用 QG 内已有函数。全量 worker 增加惰性分块读取、断点恢复与平台日志转发。
+  - target: qg_prqk/launchers/run_evaluate_qg_prqk_a4_dual_epoch3_full_test_2x6000d.sh
+    target_sha256: e6afa956f901938d1caf728e998165bbb687618f15d565037a244b25f6f64554
+    source: qg_prqk/launchers/run_evaluate_qg_prqk_a4_dual_epoch3_fixed10k_generalization_2x6000d.sh
+    source_sha256: 19024f6d61896c98cb79454259ab2f00fc5c592c7977e62d4c647240ed2f05ca
+    reused_symbols: [platform_environment, ofs_mount, resource_setup]
+    reuse_mode: adapted_copy
+    modifications: 完整复制已运行 QG 双卡入口的平台环境与认证骨架，仅改变 Test 命令、配置、短 TMPDIR 和输出命名；GPU0/GPU1 分别评测两版完整最后一天，支持 CPU dry-run、独立 smoke 和同命令续跑。
+  - target: qg_prqk/src/qg_prqk/sft/constrained_evaluation.py
+    target_sha256: 329954d62d3450208cff1248a5d7e59ccf917a8092e4490c2e19e5febe8fcb4f
+    source: qg_prqk/src/qg_prqk/sft/evaluation.py
+    source_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    reused_symbols: [evaluate_subset]
+    reuse_mode: adapted_copy
+    modifications: 为保持旧 Validation/Test 来源指纹，独立适配 chunk 断点循环；通过 model.generate 包装只增加 prefix_allowed_tokens_fn，直接复用 QG 已有编码、生成循环、排序、Final ID 解析与指标。新增全目录合法性门禁、双卡日志转发与同样本无约束差值汇总。
+  - target: qg_prqk/launchers/run_evaluate_qg_prqk_a4_dual_epoch3_constrained_fixed10k_generalization_2x6000d.sh
+    target_sha256: d825276bfa054739770d8d551761574b1ff7c25c849f6aa3f46afda17bdf45b5
+    source: qg_prqk/launchers/run_evaluate_qg_prqk_a4_dual_epoch3_fixed10k_generalization_2x6000d.sh
+    source_sha256: 19024f6d61896c98cb79454259ab2f00fc5c592c7977e62d4c647240ed2f05ca
+    reused_symbols: [platform_environment, ofs_mount, resource_setup]
+    reuse_mode: adapted_copy
+    modifications: 保留平台挂载认证与双卡环境，替换约束解码入口、配置、独立输出和短 TMPDIR；默认 CPU 预检后两版各 2 条 GPU smoke，再执行十组正式评测。
+  - target: qg_prqk/src/qg_prqk/sft/constrained_full_test.py
+    target_sha256: 2ecef0e039193f116a6e3ef444a1066c4d5dba3883b3d231e2eb8e96f66468d3
+    source: qg_prqk/src/qg_prqk/sft/full_test_evaluation.py
+    source_sha256: d8f7427f9d4ae77db39fcd5092ff5ace15d60003f037be5712db079deb5d2a0e
+    reused_symbols: [evaluate_test_chunk]
+    reuse_mode: direct_import
+    modifications: 直接复用 Test 编码与评分，通过既有 ConstrainedGenerationModel 注入全目录前缀约束；新增独立输出、分块断点和完整合法候选门禁，不更改原无约束实现。
+  - target: qg_prqk/scripts/diagnose_a0_a4.py
+    target_sha256: d8b7e07e7383e4cbaae10a2bb40f659d17f26d78cfdefbd07a7e71309acc6c93
+    source: qg_prqk/src/qg_prqk/sid/relational_quantizer.py
+    source_sha256: 4bf02b97a8a90515d5e3229180a467673991d2f927b645fee7a3229d99e926b4
+    reused_symbols: [_assign_query, _graph_penalty]
+    reuse_mode: adapted_copy
+    modifications: 将固定质心与 POI 标签下的 Query 分配目标改写为分块 NumPy 复算，只比较冻结输出，不做训练；P8 输入/边计分和 A0 Messages 回映射直接导入既有模块。
+  - target: qg_prqk/src/qg_prqk/sft/prefix_diagnostic.py
+    target_sha256: 25d13e9097bd3124f47613ab1971096f21d492e680aa230fd5063865da3710e2
+    source: qg_prqk/src/qg_prqk/sft/evaluation.py
+    source_sha256: 3de0042fcc7a6941135f6d4dc81ab0706803463cfb7e33764d249efb03dd26b1
+    reused_symbols: [validate_checkpoint, load_lf_tokenizer_and_template, encode_record, evaluate_chunk, pad_prompts, load_generation_model]
+    reuse_mode: direct_import
+    modifications: 新增固定配对选样、正确前缀评分和非侵入式生成追踪；保留原 Beam 生成与计分，不修改冻结 evaluator。

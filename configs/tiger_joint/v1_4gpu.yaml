@@ -1,0 +1,34 @@
+schema_version: tiger-joint-training-config-v1
+
+data:
+  data_dir: outputs/tiger_joint/data/EXP-20260827-01_sid_free_full_v1
+  preflight_state: outputs/tiger_joint/preflight/EXP-20260827-01_sid_free_full_v1/run_state.json
+  embedding_dir: outputs/embeddings/beijing_poi_bge_m3
+  rq_initialization_dir: outputs/tiger_joint/initialization/EXP-20260827-03_fresh_kmeans_v2
+
+model:
+  qwen_dir: models/Qwen3-0.6B
+  cutoff_len: 1024
+  gradient_checkpointing: true
+
+training:
+  epochs: 3
+  behavior_batch_size: 8
+  gradient_accumulation_steps: 16
+  catalog_batch_size: 64
+  expected_world_size: 4
+  expected_global_behavior_batch_size: 512
+  expected_global_catalog_rows_per_step: 4096
+  shuffle_buffer_rows: 8192
+  qwen_learning_rate: 0.00005
+  rq_learning_rate: 0.0003
+  qwen_weight_decay: 0.01
+  alignment_weight: 0.1
+  rq_weight: 1.0
+  temperature: 0.07
+  warmup_ratio: 0.03
+  gradient_clip_norm: 1.0
+  log_every_optimizer_steps: 20
+  probe_every_optimizer_steps: 100
+  probe_rows: 4096
+  seed: 42

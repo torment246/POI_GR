@@ -1,0 +1,173 @@
+schema_version: qg-prqk-category-config-v2.1
+
+method:
+  name: qg_prqk_v2_1_category
+  version: v2.1-CAT
+  task: exact_single_poi_retrieval
+  city: 北京
+  stop_after_phase: P8-CAT
+
+paths:
+  project_root: ../..
+  poi_catalog: data/beijing_poi_clean_20260715_json
+  poi_embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  embedding_manifest: outputs/embeddings/beijing_poi_bge_m3/manifest.json
+  p2_query_stats: qg_prqk/outputs/qg_prqk_1024x3_v1_1/query_stats
+  output_root: qg_prqk/outputs
+  output_dir: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat
+
+frozen_inputs:
+  poi_rows: 2337178
+  poi_embedding_dim: 1024
+  poi_embedding_dtype: float16
+  poi_embedding_normalized: true
+  poi_embedding_manifest_sha256: 3fabca469d0a6e9920b8d6523c69959db1f733c6564f5b6cb1b3db21ca7a969a
+  poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  p2_manifest_sha256: 25238e011dc0b162d4e27082f4bc918d1a2e64aa3ac0a46e415bee4ab07cd162
+  reencode_poi_text: false
+  append_category_to_poi_text: false
+
+identifier:
+  codebooks: [1024, 1024, 1024]
+  gid: existing_longitude_first_geohash_g1_g6
+  use_brand_family_chain_parent: false
+
+category:
+  fine_category_id:
+    source_column: category_code
+    transform: identity
+    expected_count: 402
+  coarse_category_id:
+    source_column: category_code
+    transform: first_2_digits
+    expected_count: 19
+  readable_path_column: category
+  require_full_coverage: true
+  require_fine_to_one_coarse: true
+  unknown_or_other_is_legal_category: true
+  use_as_embedding_input: false
+  existing_mapping:
+    category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+    category_indices_sha256: 5d895b0f79192fa4d82f6f158ded85d93d24e72e2e677f26475d08978c61e7a5
+    category_indices_row_order: BGE-M3 poi_ids.jsonl order
+    category_vocab: outputs/embeddings/gnpr_sid/history10_pluscode6_top10_v1/category_vocab.parquet
+    category_vocab_data_sha256: 7c0b04e98496cf0f2da21639fec589b3f74d63a9972e95204cd98e982e919419
+    source_manifest: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/manifest.json
+    source_manifest_sha256: f47dd7c6673221140f41a83fee7e32b33381ad0169e919bc5f79cc5cef140a0e
+  p2_5_output_mapping: category_mapping.parquet
+
+query_depth:
+  d3:
+    use_existing_p2_exact_core: true
+  d2_fine_category:
+    min_query_count: 3
+    min_concentration: 0.80
+    max_normalized_entropy: 0.40
+  d1_coarse_category:
+    min_query_count: 3
+    min_concentration: 0.85
+    max_normalized_entropy: 0.35
+  support_cap: 20
+  support_transform: normalized_log1p_min
+  reliability_gamma: 1.0
+  sensitivity:
+    - name: relaxed
+      d2_fine_category:
+        min_query_count: 2
+        min_concentration: 0.75
+        max_normalized_entropy: 0.45
+      d1_coarse_category:
+        min_query_count: 2
+        min_concentration: 0.80
+        max_normalized_entropy: 0.40
+    - name: baseline
+      d2_fine_category:
+        min_query_count: 3
+        min_concentration: 0.80
+        max_normalized_entropy: 0.40
+      d1_coarse_category:
+        min_query_count: 3
+        min_concentration: 0.85
+        max_normalized_entropy: 0.35
+    - name: strict
+      d2_fine_category:
+        min_query_count: 5
+        min_concentration: 0.85
+        max_normalized_entropy: 0.35
+      d1_coarse_category:
+        min_query_count: 5
+        min_concentration: 0.90
+        max_normalized_entropy: 0.30
+
+query_embedding:
+  current_status: CODE_ONLY
+  run_p3a_gate_after_p2_5_cat: true
+  reuse_verified_checkpoint_if_present: true
+  full_training_requires_user_confirmation: true
+  keep_raw_bge_for_diagnostics: true
+
+prqk:
+  metric: cosine
+  init: kmeans++
+  seed: 42
+  remove_global_direction: true
+  residual: projection
+  min_iter: 8
+  max_iter: 30
+  objective_rel_tol: 1.0e-4
+  poi_assignment_change_tol: 1.0e-3
+  query_assignment_change_tol: 2.0e-3
+  patience: 2
+  topk_refinement:
+    enabled: true
+    topk: 5
+    beta: 15
+    max_iter: 5
+
+s1:
+  query_distortion_weight: 0.05
+  graph_alignment_weight: 0.05
+  category_weight: 0.08
+  category_smoothing: 32
+  query_centroid_shrinkage: 32
+
+s2:
+  query_distortion_weight: 0.10
+  graph_alignment_weight: 0.10
+  category_weight: 0.08
+  category_smoothing: 16
+  query_centroid_shrinkage: 32
+
+s3:
+  query_distortion_weight: 0.20
+  graph_alignment_weight: 0.20
+  geo_weight: 0.10
+  hard_collision_weight: 0.05
+  query_centroid_shrinkage: 32
+  parent_key: [gid6, s1, s2]
+  hard_edge:
+    require_same_fine_category: true
+    allow_same_or_adjacent_gid6: true
+    require_bge_or_name_similarity: true
+    max_neighbors: 20
+    exclude_self_poi: true
+    exclude_false_negative_protected: true
+    canonical_duplicate_mapping: null
+
+warmup:
+  zero_weight_iters: 2
+  linear_ramp_end_iter: 6
+
+first_run:
+  build_poi_only_initialization: true
+  run_full_query_category_geo: true
+  compare_poi_only_and_full_at_p8: true
+  run_other_ablations: false
+  start_qwen_sft: false
+
+runtime:
+  overwrite: false
+  require_sample_and_medium_gate_before_full: true
+  p2_5_sample_query_limit: 1000
+  p2_5_medium_query_limit: 50000

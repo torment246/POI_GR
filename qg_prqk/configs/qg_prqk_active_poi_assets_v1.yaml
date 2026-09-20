@@ -1,0 +1,29 @@
+schema_version: qg-prqk-active-poi-assets-config-v1
+
+paths:
+  project_root: ../..
+  active_catalog: data/beijing_poi_active_order14d_history10_20260715_json
+  active_catalog_manifest: data/beijing_poi_active_order14d_history10_20260715_json/manifest.json
+  active_poi_ids: data/beijing_poi_active_order14d_history10_20260715_json/poi_ids.jsonl
+  source_embeddings: outputs/embeddings/beijing_poi_bge_m3/embeddings.npy
+  source_poi_ids: outputs/embeddings/beijing_poi_bge_m3/poi_ids.jsonl
+  source_embedding_manifest: outputs/embeddings/beijing_poi_bge_m3/manifest.json
+  source_category_indices: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/category_indices.npy
+  source_category_manifest: outputs/embeddings/gnpr_sid/bge_m3_category_pluscode6_full_v1/manifest.json
+  output_dir: qg_prqk/outputs/inputs/beijing_poi_active_bge_m3_v1
+
+frozen_inputs:
+  source_rows: 2337178
+  active_rows: 716245
+  embedding_dim: 1024
+  embedding_dtype: float16
+  active_catalog_manifest_sha256: dc13c3f137c57ba715f129ff2ccbbd8909d910da3cebc4a9fdbce2172f4d144a
+  active_poi_ids_sha256: 8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81
+  source_poi_ids_sha256: b3d409ef673bc176eb3637d43de8841148377ba6b251e22ff52684f9b70e98e7
+  source_embedding_manifest_sha256: 3fabca469d0a6e9920b8d6523c69959db1f733c6564f5b6cb1b3db21ca7a969a
+  source_category_indices_sha256: 5d895b0f79192fa4d82f6f158ded85d93d24e72e2e677f26475d08978c61e7a5
+  source_category_manifest_sha256: f47dd7c6673221140f41a83fee7e32b33381ad0169e919bc5f79cc5cef140a0e
+  category_vocab_count: 402
+
+runtime:
+  chunk_rows: 32768

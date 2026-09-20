@@ -1,0 +1,73 @@
+schema_version: qg-prqk-p7-nogid-direct-full-config-v1
+protocol_id: p7_nogid_s1s2_parent_hard60_topk5_direct_full_v1
+scope: P7-CAT_S3_S1S2_PARENT_NO_GID
+
+base_execution_config: qg_prqk_p6_p7_active_512x3_hard60_topk5_direct_full_v2.yaml
+base_execution_config_sha256: 3ef96a0445e3e37e30e1c8d86c3a18b65fa0ac5eaae56cd81123fdc03b61acf7
+base_execution_signature: 2e7aa687648d3ba7e2737ade36d6d60f273c3dfe08efe20804476bb01dcc8fc0
+output_subdir: poi_query_category_geo_nogid_prqk_s3_s1s2_parent_hard60_topk5_v1
+
+# sample 只负责工程闭环；方法判断只依据 full。
+gates:
+  sample:
+    p6_manifest:
+      path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/sample_001000q_011459p/manifest.json
+      sha256: 10f40347f60e38289cb9b0405787433e176c0ab051b718773d9e3e2ab36a612a
+    poi_rows: 11459
+    p6_query_rows: 1000
+    d3_query_rows: 832
+    s3_edge_rows: 832
+  full:
+    p6_manifest:
+      path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/manifest.json
+      sha256: 326e00d62e132bffdcbaa05ac21a839b886fda5c9d00608c4ebfcb9486bb1624
+    poi_rows: 716245
+    p6_query_rows: 342879
+    d3_query_rows: 291590
+    s3_edge_rows: 291590
+
+poi_catalog:
+  path: data/beijing_poi_active_order14d_history10_20260715_json
+  manifest_sha256: dc13c3f137c57ba715f129ff2ccbbd8909d910da3cebc4a9fdbce2172f4d144a
+  poi_ids_sha256: 8b170fe38eb86a8018f54231676c201a930a525f66243f19e91cdbbf7f2cab81
+  allowed_fields: [poi_id, displayname, alias, category, category_code, address, lat, lng]
+  excluded_fields: [area, layer, click_score]
+
+hard_graph:
+  score_weights:
+    bge: 0.35
+    name_alias: 0.30
+    category: 0.15
+    address: 0.10
+  score_threshold: 0.50
+  threshold_equivalence: original_0.60_minus_same_gid6_constant_0.10
+  max_neighbors: 20
+  require_same_fine_category: true
+  parent_key: [s1, s2]
+  exclude_self_poi: true
+  exclude_false_negative_protected: true
+  canonical_duplicate_mapping: null
+
+continuous_geo:
+  gid_or_geohash_used: false
+  coordinate_system: beijing_local_equirectangular_meters
+  parent_key: [s1, s2]
+  features: [parent_dx, parent_dy, log1p_parent_distance, parent_bearing_sin, parent_bearing_cos]
+  standardization: median_iqr_with_mean_std_fallback
+  singleton_zero: true
+
+local_refinement:
+  candidate_codes: 32
+  sweeps: 3
+
+final_sid:
+  positions: [s1, s2, s3]
+  gid_in_identifier: false
+  force_unique: false
+
+authorization:
+  id: USER_CONFIRMED_20260911_BUILD_S3_FROM_S1S2_WITHOUT_GID
+  gate_sequence: sample_smoke_then_full_skip_medium
+  unchanged: p6_endpoint_query_graph_initialization_weights_warmup_topk_projection_residual_capacity_and_stopping_thresholds
+  stop_after: HOLD_FOR_NOGID_S3_REVIEW
+  forbidden_downstream: [FINAL_PID, DEDUP_ID, TOKENIZER, TRIE, QWEN_SFT, EXTERNAL_BASELINE]

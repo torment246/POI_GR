@@ -162,8 +162,10 @@ def _trie_inputs(trie_dir: Path) -> tuple[Path, dict[str, Any]]:
     mapping = Path(manifest.get("input", {}).get("pid_mapping", ""))
     if not mapping.is_file():
         raise GenerativeEvalError("Trie manifest 中的 PID mapping 不存在")
-    if manifest.get("leaf_count") != 2_337_178:
-        raise GenerativeEvalError("Trie 叶子数必须为 2,337,178")
+    poi_count = manifest.get("input", {}).get("poi_count")
+    if (not isinstance(poi_count, int) or isinstance(poi_count, bool)
+            or poi_count <= 0 or manifest.get("leaf_count") != poi_count):
+        raise GenerativeEvalError("Trie 叶子数必须等于冻结 PID 目录 POI 数")
     return mapping, manifest
 
 

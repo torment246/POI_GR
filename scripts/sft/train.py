@@ -104,6 +104,38 @@ def validate_tokenized_cache_cutoff(tokenized_path, cutoff_len):
     return manifest_path
 
 
+def validate_resume_checkpoint(resume_path, nproc_per_node):
+    """Validate the Trainer state required for deterministic single-node resume."""
+
+    resume_path = Path(resume_path)
+    common_files = (
+        "model.safetensors",
+        "optimizer.pt",
+        "scheduler.pt",
+        "trainer_state.json",
+    )
+    missing = [name for name in common_files if not (resume_path / name).is_file()]
+    if nproc_per_node == 1:
+        if not any(
+            (resume_path / name).is_file()
+            for name in ("rng_state.pth", "rng_state_0.pth")
+        ):
+            missing.append("rng_state.pth（或 rng_state_0.pth）")
+    else:
+        missing.extend(
+            name
+            for name in (
+                f"rng_state_{rank}.pth" for rank in range(nproc_per_node)
+            )
+            if not (resume_path / name).is_file()
+        )
+    if missing:
+        raise FileNotFoundError(
+            "恢复 Checkpoint 缺少完整训练状态：" + "、".join(missing)
+        )
+    return resume_path
+
+
 def validate_args(args, project_root):
     if args.nproc_per_node <= 0:
         raise ValueError("nproc_per_node 必须大于 0")
@@ -157,21 +189,7 @@ def validate_args(args, project_root):
     resume_path = None
     if args.resume:
         resume_path = resolve_path(project_root, args.resume_path)
-        checkpoint_files = (
-            "model.safetensors",
-            "optimizer.pt",
-            "scheduler.pt",
-            "trainer_state.json",
-            "rng_state.pth",
-        )
-        missing_checkpoint_files = [
-            name for name in checkpoint_files if not (resume_path / name).is_file()
-        ]
-        if missing_checkpoint_files:
-            raise FileNotFoundError(
-                "恢复 Checkpoint 缺少完整训练状态："
-                + "、".join(missing_checkpoint_files)
-            )
+        validate_resume_checkpoint(resume_path, args.nproc_per_node)
 
     return {
         "global_batch_size": global_batch_size,
@@ -271,8 +289,16 @@ def write_epoch_checkpoint_index(output_dir, expected_epochs):
         if abs(float(epoch) - rounded_epoch) > 1e-4:
             continue
         global_step = state.get("global_step")
-        if not isinstance(global_step, int):
-            global_step = int(suffix)
+        if not isinstance(global_step, int) or global_step != int(suffix):
+            raise RuntimeError(
+                f"Checkpoint 目录与 trainer_state.global_step 不一致：{path}"
+            )
+        required = ("model.safetensors", "config.json", "trainer_state.json")
+        missing = [name for name in required if not (path / name).is_file()]
+        if missing:
+            raise RuntimeError(
+                f"Epoch Checkpoint 不完整：{path} 缺少 " + "、".join(missing)
+            )
         checkpoints.append(
             {
                 "epoch": int(rounded_epoch),
@@ -288,21 +314,36 @@ def write_epoch_checkpoint_index(output_dir, expected_epochs):
             f"完整 Epoch Checkpoint 不一致：{observed_epochs} != {required_epochs}"
         )
     index_path = output_dir / "epoch_checkpoints.json"
-    index_path.write_text(
-        json.dumps(
-            {
-                "save_strategy": "epoch",
-                "num_train_epochs": float(expected_epochs),
-                "checkpoints": checkpoints,
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
+    temporary = index_path.with_name(f".{index_path.name}.tmp-{os.getpid()}")
+    try:
+        temporary.write_text(
+            json.dumps(
+                {
+                    "save_strategy": "epoch",
+                    "num_train_epochs": float(expected_epochs),
+                    "checkpoints": checkpoints,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
+        os.replace(temporary, index_path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return index_path
+
+
+def run_llamafactory_launcher(launch):
+    """Treat the distributed launcher's SystemExit(0) as a successful return."""
+
+    try:
+        launch()
+    except SystemExit as error:
+        if error.code not in (None, 0):
+            raise
 
 
 def save_resolved_config(args, config, resolved):
@@ -392,7 +433,7 @@ def launch_training(args):
     original_argv = sys.argv
     sys.argv = [str(Path(__file__).resolve()), "train", str(runtime_config_path)]
     try:
-        launcher.launch()
+        run_llamafactory_launcher(launcher.launch)
         if args.save_strategy == "epoch":
             index_path = write_epoch_checkpoint_index(
                 config["output_dir"],

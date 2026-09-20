@@ -25,7 +25,7 @@ class SftTrainingConfigTest(unittest.TestCase):
         expected = json.loads(expected_path.read_text(encoding="utf-8"))
         actual = json.loads(actual_path.read_text(encoding="utf-8"))
         self.assertEqual(expected, actual)
-        self.assertEqual(
+        self.assertGreaterEqual(
             set(actual),
             {
                 "beijing_order_main_v1_train",
@@ -62,9 +62,23 @@ class SftTrainingConfigTest(unittest.TestCase):
         )
         serialized = json.dumps(actual)
         self.assertNotIn("test.jsonl", serialized)
+        for name in actual:
+            self.assertTrue(name.endswith(("_train", "_valid")))
+            stem = name.rsplit("_", 1)[0]
+            self.assertIn(f"{stem}_train", actual)
+            self.assertIn(f"{stem}_valid", actual)
         for item in actual.values():
             self.assertEqual(item["formatting"], "sharegpt")
             self.assertEqual(item["columns"]["messages"], "messages")
+
+    def test_active_gnpr_matches_tiger_except_artifact_paths(self) -> None:
+        tiger = self.load_yaml("tiger_active716k_bge_m3_512x3_history10_query_gid_v1.yaml")
+        gnpr = self.load_yaml("gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1.yaml")
+        path_keys = {"model_name_or_path", "dataset", "eval_dataset", "tokenized_path", "output_dir", "logging_dir"}
+        self.assertEqual({k: v for k, v in tiger.items() if k not in path_keys},
+                         {k: v for k, v in gnpr.items() if k not in path_keys})
+        self.assertEqual(gnpr["cutoff_len"], 1024)
+        self.assertIn("GNPR-Active716K", gnpr["model_name_or_path"])
 
     def test_tiger_formal_training_protocol(self) -> None:
         config = self.load_yaml(

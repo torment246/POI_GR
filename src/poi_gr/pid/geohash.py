@@ -27,7 +27,6 @@ GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
 PID_SCHEMA_VERSION = "geohash-pid-v1"
 PID_METRICS_SCHEMA_VERSION = "geohash-pid-evaluation-v1"
 PID_COMPARISON_SCHEMA_VERSION = "geohash-pid-comparison-v1"
-EXPECTED_SID_CODEBOOK_SIZES = (1024, 1024, 1024)
 EXPECTED_SID_CHECKPOINT_EPOCH = 20
 OUTPUT_FILENAMES = (
     "gid_codes.npy",
@@ -901,6 +900,7 @@ def build_geohash_pid(
     geohash_length: int = 6,
     order: str = "gid_sid",
     max_cases: int = 20,
+    sid_codebook_size: int = 1024,
     progress: Callable[[str], None] | None = None,
 ) -> GeohashPidResult:
     """Build full GID/PID arrays, evaluate collisions, and write six artifacts."""
@@ -926,9 +926,11 @@ def build_geohash_pid(
         raise GeohashPidError(
             f"PID-001 要求 SID shape=[N,3]，实际 {list(sid_input.codes.shape)}"
         )
-    if sid_input.codebook_sizes != EXPECTED_SID_CODEBOOK_SIZES:
+    if sid_codebook_size not in (512, 1024):
+        raise GeohashPidError("SID codebook size 只支持 512 或 1024")
+    if sid_input.codebook_sizes != (sid_codebook_size,) * 3:
         raise GeohashPidError(
-            "PID-001 要求 SID codebook_sizes=[1024,1024,1024]，实际 "
+            f"要求 SID codebook_sizes={[sid_codebook_size] * 3}，实际 "
             f"{list(sid_input.codebook_sizes)}"
         )
     sid_manifest = _load_json_object(sid_manifest_path, "SID manifest")

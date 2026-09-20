@@ -41,6 +41,12 @@ from poi_gr.pid.trie import (  # noqa: E402
 
 
 class GenerativeEvalTest(unittest.TestCase):
+    def test_causal_history_accepts_user_hash_but_not_arbitrary_header(self) -> None:
+        target = "<G_w><G_x><G_4><G_g><G_0><G_0><S1_1><S2_2><S3_3>"
+        prompt = f"<HISTORY><POI_PID>{target}</POI_PID></HISTORY><CURRENT>query</CURRENT>"
+        self.assertTrue(target_pid_is_confined_to_causal_history("<USER_ID><U_0199></USER_ID>\n" + prompt, target))
+        self.assertFalse(target_pid_is_confined_to_causal_history(target + prompt, target))
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

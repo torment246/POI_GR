@@ -1,0 +1,132 @@
+# 四个 active epoch-3 模型；全量 Test；约束协议与旧无约束结果隔离。
+schema_version: active-four-model-full-test-v1
+split: test
+date: '2026-07-14'
+rows: 606682
+num_beams: 10
+cutoff_len: 1024
+output_root: outputs/eval/active_four_models_full_test_20260714_v1
+qg_test_config: qg_prqk/configs/sft/evaluation_epoch3_full_test_20260714_v1.yaml
+models:
+  gnpr:
+    decoding: unconstrained
+    data_dir: data/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1
+    checkpoint: outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377
+    step: 7377
+    checkpoint_sha256: b9b7e28013abc71d754b33e5f4bd4519ee36abf051961a0fda44231b1bb499d7
+    tokenizer: models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1
+    identifier_dir: outputs/sid/gnpr_sid/bge_m3_category_pluscode6_active716k_v1/GNPR-ACTIVE716K-BGE-M3-512x3-FULLINIT/gnpr_ids/epoch_20
+    test_sha256: 673157f770598509a4ce4bbefbe9c5903b5f0a108d45e03f8e676eaa3d6a5b4b
+  genpoi:
+    decoding: tcg_ssp
+    data_dir: data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1
+    checkpoint: outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868
+    step: 8868
+    checkpoint_sha256: 9b783358b0d1ee3640c04417bb9c9008bf8af62c4d7344ca3c6b64a0561f12b2
+    tokenizer: models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1
+    trie_dir: outputs/eval/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/trie
+    head_dir: outputs/genpoi/proximity_head_bge_m3_v1
+    test_sha256: 4690472548e74e980ca0e36381d392faf4c5966936ece5007d6a464cc5dc9b9f
+  qg_hrq_gid:
+    decoding: full_catalog_constrained
+    variant: a4_gid_parent
+    data_dir: qg_prqk/outputs/sft_data/a4_gid_parent_order_a_history10_v1
+    checkpoint: qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949
+    step: 8949
+    checkpoint_sha256: fa24f17687b1c89876abb5bde57abe94865f7fc62d72b9b08649e49f179d81b7
+    tokenizer: qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1
+    identifier_dir: qg_prqk/outputs/final_identifiers/a4_gid_parent_order_a_v1
+    test_sha256: 8aa7616fad72d48b0103481aae135e129b0f3d7856fef4b2f13456191c6a54d9
+  qg_hrq_nogid:
+    decoding: full_catalog_constrained
+    variant: a4_nogid
+    data_dir: qg_prqk/outputs/sft_data/a4_nogid_sid3_history10_v1
+    checkpoint: qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404
+    step: 7404
+    checkpoint_sha256: b544f2c58ceecde3940dd44d1b9ee652d2889dd5f7551b3349cd2046762f71ca
+    tokenizer: qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1
+    identifier_dir: qg_prqk/outputs/final_identifiers/a4_nogid_sid3_v1
+    test_sha256: 87d478f19039de7474a62ca7859317759e1917990b504d8c1d2bfc730bba7a30
+frozen_files:
+  data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/manifest.json: 12a9ef88765a25ba327285df082f9416b7387a04b856c00b55b166e96f042a7e
+  data/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/manifest.json: 0800639b75215cc1f7551dbcf3c72ece1e25b1e25df12475432277f8efaba3be
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/added_tokens.json: 2c26c937b084060917fa908725e46af4aa40ffea825f41fd3ed0da70611ae4d5
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/config.json: 3d259c55ae04f57b8e7296aa70f0a144b3726a77e0af863378a03a7b0658a0cd
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/generation_config.json: 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/poi_token_mapping.json: d00f8adf9bfb5874b9327e7142bebc68a133543411f34fe269a9ef757911c0ca
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/special_tokens_map.json: 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/tokenizer.json: 8a355d9cf1c3e5ac439f4ec70429bd59ac763c1d8a2a6a8d9a7d1afe46bb5d3a
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/tokenizer_config.json: 6784f090349c3570e1ed582a17638b634f455e01dc4292eecd5a4f741bdfc5e2
+  models/Qwen3-0.6B-GNPR-Active716K-512x3-Vocab-v1/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/added_tokens.json: b0d2efced0d66bb7b6766b3c356aa7c7fe9f49d5da002ceb624e31791b558197
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/config.json: 58ee8d5b7878d00ae7be59f0753e313d862d9a179318f029fcb78a30520894c2
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/generation_config.json: 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/poi_token_mapping.json: e1b2f859761756b26eca0e70f93befc6574b7cc23c67a5298e8f674af91c684d
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/special_tokens_map.json: 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/tokenizer.json: 5841dd0a1b3166cb6803903db59da3eaa37ae68e5fec4f6b01adba6d9f7fb58d
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/tokenizer_config.json: eac77f9f738e264e64792ec72ddd09f3993516ddbcbd1e41594550965f151aa6
+  models/Qwen3-0.6B-GenPOI-Active716K-512x3-Vocab-v1/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  outputs/eval/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/trie/trie_manifest.json: 34ec4f7354c84305168c8142861cf8c2abfa79645453ede61ff81226b631276a
+  outputs/genpoi/proximity_head_bge_m3_v1/proximity_head.safetensors: 231b923f90affa4e408721e6ed460a7d853def619f4acdaa37fa212194640997
+  outputs/genpoi/proximity_head_bge_m3_v1/training_manifest.json: 55bea0d55c5c1f475bfecd948e36d88cfbe3522a20b47da9f6755c5e7b4f1e93
+  ? outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/added_tokens.json
+  : b0d2efced0d66bb7b6766b3c356aa7c7fe9f49d5da002ceb624e31791b558197
+  outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/config.json: d51e33f11b64519caeeb08b8287e14a1da1aadd5642af7657bb3e5102192da67
+  ? outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/generation_config.json
+  : 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  ? outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/special_tokens_map.json
+  : 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/tokenizer.json: 5841dd0a1b3166cb6803903db59da3eaa37ae68e5fec4f6b01adba6d9f7fb58d
+  ? outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/tokenizer_config.json
+  : 511dadb3daf406eb4e24b13c26a25edf2fcab053660be9b4c37be1a9b97d324f
+  ? outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/trainer_state.json
+  : a7f260c995421a4cec73b9856db736c385dbcb9d3e878c3f026f22878757cc91
+  outputs/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-8868/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/added_tokens.json
+  : 2c26c937b084060917fa908725e46af4aa40ffea825f41fd3ed0da70611ae4d5
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/config.json
+  : 7fe64268ed8c663cd0f1dcbaef75d92c2d4dd707c5c0506247584cea94959d23
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/generation_config.json
+  : 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/special_tokens_map.json
+  : 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/tokenizer.json
+  : 8a355d9cf1c3e5ac439f4ec70429bd59ac763c1d8a2a6a8d9a7d1afe46bb5d3a
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/tokenizer_config.json
+  : ed6df6798a50c675868c419bde0a984331e52421f7c7b5f2419b242eae47ed48
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/trainer_state.json
+  : 2fb21fbb44efff512fedf26008d7e1392c3a351387942742f9b7f6717594336d
+  ? outputs/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_gpu4_6000d_e3/checkpoint-7377/vocab.json
+  : ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  ? outputs/sid/gnpr_sid/bge_m3_category_pluscode6_active716k_v1/GNPR-ACTIVE716K-BGE-M3-512x3-FULLINIT/gnpr_ids/epoch_20/gnpr_id_manifest.json
+  : 86c78edf8f309b20720d9c43586b798912d185c0ac8188f092882dd0bf39cd39
+  qg_prqk/configs/sft/evaluation_epoch3_fixed10k_generalization_v1.yaml: 921fc45205fc222c2997826e95e09339feca8f543ea7695b17749c0485fea1ed
+  qg_prqk/configs/sft/evaluation_epoch3_full_test_20260714_v1.yaml: e35f6757184d95a8284be2351ae90bb930b824fb9742c2bb7cf3c94c268c9389
+  qg_prqk/outputs/final_identifiers/a4_gid_parent_order_a_v1/manifest.json: 7c87a9d7e1c94874ad4ebf8fd61504f0bd52176e48f6c20ad88a5f72af9e5b86
+  qg_prqk/outputs/final_identifiers/a4_nogid_sid3_v1/manifest.json: 794a6069585b0f8c81fd5ddc646a2be82f4be2667816b060c4ba6dd5436309d8
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/added_tokens.json: 279930f668d7236d67fed2a2d5395005bfcf7a1ade473cda88e56b8c0aa86f00
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/config.json: a2f111bda1f56cdf918739134697a9786d647b2b2f7ca10f20b053114cd3d2ef
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/generation_config.json: 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/qg_prqk_token_mapping.json: ced19fd4025662e0faabc3e8f032c1b89e3bc28bfba64c6402bfff3ad41f9d1b
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/special_tokens_map.json: 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/tokenizer.json: 9c4f5a5ec9fe380cdad0af37c359bcdb231012a769c53fc65cdfe807ec3f0f61
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/tokenizer_config.json: dc3c63150321df780d66d8d6e6c301e1be9f700688c168c927076f057b0a8652
+  qg_prqk/outputs/models/Qwen3-0.6B-QGPRQK-A4-Vocab-v1/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/added_tokens.json: 279930f668d7236d67fed2a2d5395005bfcf7a1ade473cda88e56b8c0aa86f00
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/config.json: 51e445d24069eb5fce4008eb5abfae2e88f077171c001a70c9e8cff4cf6e1af9
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/generation_config.json: 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/special_tokens_map.json: 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/tokenizer.json: 9c4f5a5ec9fe380cdad0af37c359bcdb231012a769c53fc65cdfe807ec3f0f61
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/tokenizer_config.json: 22b6c9542a891de3e1d3bc69d824eb1fcf0e069493f29a1ad8e633542091ca80
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/trainer_state.json: feabf4b2018b3d61b7a957ec7aed841302e82f331da019001d2b04eb8e5fe10c
+  qg_prqk/outputs/sft/a4_gid_parent_history10_v1_gpu4_e3/checkpoint-8949/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/added_tokens.json: 279930f668d7236d67fed2a2d5395005bfcf7a1ade473cda88e56b8c0aa86f00
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/config.json: 51e445d24069eb5fce4008eb5abfae2e88f077171c001a70c9e8cff4cf6e1af9
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/generation_config.json: 787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/special_tokens_map.json: 76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/tokenizer.json: 9c4f5a5ec9fe380cdad0af37c359bcdb231012a769c53fc65cdfe807ec3f0f61
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/tokenizer_config.json: 22b6c9542a891de3e1d3bc69d824eb1fcf0e069493f29a1ad8e633542091ca80
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/trainer_state.json: a12ad49f6698ea0418649c74198b5daa611c1f6d7ff7798fc11acea6f078b372
+  qg_prqk/outputs/sft/a4_nogid_history10_v1_gpu4_e3/checkpoint-7404/vocab.json: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+  qg_prqk/outputs/sft_data/a4_gid_parent_order_a_history10_v1/manifest.json: c05810df785952b5e4412d4e67d31324587e2e02fb940ebb005331d9ea09e114
+  qg_prqk/outputs/sft_data/a4_nogid_sid3_history10_v1/manifest.json: b173fe1411b6043727bd138a88b93bb9456b2bff89522d1c46b75e6304d21e65

@@ -1,0 +1,51 @@
+schema_version: qg-prqk-p8-nogid-comparison-config-v1
+protocol_id: p8_nogid_s1s2_parent_comparison_full_v1
+scope: P8_COMPARE_A0_A4_GID_A4_NOGID_WITH_THREE_TOKEN_SID
+
+output_dir: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/p8_nogid_s1s2_parent_comparison_v1/full_342879q_716245p
+rows:
+  poi: 716245
+  query: 342879
+  d3_query: 291590
+  embedding_dim: 1024
+
+frozen_manifests:
+  p4:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/query_graph/full_342879/manifest.json
+    sha256: f6f5a6b4a6f5ef78ff8eb1007e8b566a17fe5a911aae215185b0ed156ab6329d
+  p5_a0:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/manifest.json
+    sha256: ec84eb8fa2c1c65059caab1de94d43095d82048c25310564e6950ab0a244789e
+  p6:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_prqk_s1_s2_hard60_topk5_v1/full_342879q_716245p/manifest.json
+    sha256: 326e00d62e132bffdcbaa05ac21a839b886fda5c9d00608c4ebfcb9486bb1624
+  p7_gid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_geo_prqk_s3_hard60_topk5_v1/full_291590q_716245p/manifest.json
+    sha256: dd395ab0d11321106455ad05b18503af9b7d3dda7cb7fd85e531655cece2133c
+  p7_nogid:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_query_category_geo_nogid_prqk_s3_s1s2_parent_hard60_topk5_v1/full_291590q_716245p/manifest.json
+    sha256: a6ce4ba8c20f79073e5a41fa2e516b26b2bdeb7c2d7c56e260f4a94f46bf1d6c
+
+category_mapping: qg_prqk/outputs/qg_prqk_1024x3_v2_1_cat_active/query_depth/category_mapping.parquet
+
+comparison:
+  methods: [A0_POI_ONLY, A4_GID_PARENT, A4_NOGID_S1S2_PARENT]
+  final_sid_positions: [s1, s2, s3]
+  s3_candidate_parent: [s1, s2]
+  similarity: cosine
+  residual: selected_centroid_projection_then_l2_normalize
+  aggregation: [edge_weighted, unweighted]
+  tie_break: lowest_token_id
+  external_baseline: false
+
+publication:
+  sid_source: A4_NOGID_S1S2_PARENT
+  include_query_assignments: true
+  include_bucket_index: true
+  force_unique_sid: false
+  gid_artifact: false
+
+authorization:
+  id: USER_CONFIRMED_20260911_BUILD_S3_FROM_S1S2_WITHOUT_GID
+  stop_after: HOLD_FOR_NOGID_S3_REVIEW
+  forbidden_downstream: [FINAL_PID, DEDUP_ID, TOKENIZER, TRIE, QWEN_SFT, EXTERNAL_BASELINE]

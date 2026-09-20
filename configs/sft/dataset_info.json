@@ -1,4 +1,32 @@
 {
+  "gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/gnpr_active716k_bge_m3_category_pluscode6_512x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
   "beijing_order_main_v1_train": {
     "file_name": "../../data/sft/beijing_order_main_v1/train.jsonl",
     "formatting": "sharegpt",
@@ -43,6 +71,62 @@
   },
   "tiger_bge_m3_1024x3_history10_query_gid_v1_valid": {
     "file_name": "../../data/sft/tiger_bge_m3_1024x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_active716k_bge_m3_512x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_active716k_bge_m3_512x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/tiger_active716k_bge_m3_512x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/tiger_active716k_mmbert_recall_128_512x3_history10_query_gid_v1/valid.jsonl",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"
@@ -407,6 +491,90 @@
   },
   "tiger_mmbert_recall_128_1024x3_history10_query_gid_v1_valid": {
     "file_name": "../../data/sft/tiger_mmbert_recall_128_1024x3_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_gid6_sid_dedup_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/tiger_bge_m3_1024x3_sid_gid6_dedup_history10_query_gid_v1/valid.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_train": {
+    "file_name": "../../data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/train.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1_valid": {
+    "file_name": "../../data/sft/genpoi_active716k_centered_geope32_512x3_history10_query_gid_v1/valid.jsonl",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

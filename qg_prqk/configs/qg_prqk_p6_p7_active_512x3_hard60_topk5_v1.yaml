@@ -1,0 +1,61 @@
+schema_version: qg-prqk-p6-p7-canonical-config-v1
+protocol_id: hard60_topk5_v1
+scope: P6-CAT_P7-CAT
+
+# 冻结旧 downstream 配置；P4 和 P5 的既有 manifest 继续使用原始 30 轮签名。
+base_downstream_config: qg_prqk_v2_1_category_active_512x3.yaml
+base_downstream_config_sha256: a34b5cfd531d84fae14aa719d6546ff23da577830d48665a9529e74f46bd2ac5
+base_downstream_signature: b4bc8a786841faf3dcedff375f4e7390efbafec54df14f27a2c3b540e4ed42c2
+
+output_subdirs:
+  p6: poi_query_category_prqk_s1_s2_hard60_topk5_v1
+  p7: poi_query_category_geo_prqk_s3_hard60_topk5_v1
+
+# 2026-09-09 用户确认：POI 使用 P5 seed=42 的嵌套确定性集合，Query 使用
+# P4 query_id 稳定行序前缀；随后补齐所选 Query 的全部 S1/S2 target POI。
+p6_gates:
+  selection: deterministic_p5_seeded_poi_plus_p4_query_prefix_graph_closure
+  seed: 42
+  sample:
+    base_poi_rows: 10000
+    query_rows: 1000
+    expected_closed_poi_rows: 11459
+    expected_s1_s2_edge_rows: 2610
+  medium:
+    base_poi_rows: 100000
+    query_rows: 50000
+    expected_closed_poi_rows: 148860
+    expected_s1_s2_edge_rows: 134265
+
+# 2026-09-09 用户确认 P6/P7 hard alternating 上限统一为 60；其余算法参数不变。
+prqk:
+  metric: cosine
+  init: kmeans++
+  seed: 42
+  remove_global_direction: true
+  residual: projection
+  min_iter: 8
+  max_iter: 60
+  objective_rel_tol: 1.0e-4
+  poi_assignment_change_tol: 1.0e-3
+  query_assignment_change_tol: 2.0e-3
+  patience: 2
+  topk_refinement:
+    enabled: true
+    topk: 5
+    beta: 15
+    max_iter: 5
+
+frozen_inputs:
+  p4_full_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/query_graph/full_342879/manifest.json
+    sha256: f6f5a6b4a6f5ef78ff8eb1007e8b566a17fe5a911aae215185b0ed156ab6329d
+  p5_full_manifest:
+    path: qg_prqk/outputs/qg_prqk_512x3_v2_1_cat_active/poi_prqk_a0_hard60_topk5_v1/full_716245/manifest.json
+    sha256: ec84eb8fa2c1c65059caab1de94d43095d82048c25310564e6950ab0a244789e
+
+authorization:
+  id: USER_CONFIRMED_20260909_P6_P7_MAX_ITER_60
+  change: hard_alternating_fit.max_iter_30_to_60
+  unchanged: weights_warmup_topk_residual_capacity_and_stopping_thresholds
+  sample_protocol_id: USER_CONFIRMED_20260909_P6_GRAPH_CLOSED_SAMPLE_MEDIUM

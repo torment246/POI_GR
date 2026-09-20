@@ -20,6 +20,21 @@ from poi_gr.methods.gnpr.eval import (
 
 
 class GnprEvalTest(unittest.TestCase):
+    def test_dynamic_dedup_capacity_keeps_keys_distinct(self) -> None:
+        for capacity in (2, 100, 223, 300):
+            values = [[1, 2, 3, -1], [1, 2, 3, 0], [1, 2, 3, capacity - 1], [1, 2, 4, -1]]
+            keys = np.asarray([GnprIdIndex.pack(value, capacity) for value in values], dtype=np.int64)
+            self.assertEqual(len(set(keys)), 4)
+            order = np.argsort(keys)
+            index = GnprIdIndex(sorted_keys=keys[order], sorted_rows=order,
+                                poi_ids=None, dedup_capacity=capacity)
+            for row, value in enumerate(values):
+                self.assertEqual(index.lookup(value), row)
+            self.assertEqual(index.lookup([1, 2, 3, capacity]), -1)
+            self.assertEqual(parse_target_codes(
+                f"<TARGET_POI><a_1><b_2><c_3><d_{capacity - 1}></TARGET_POI>",
+                dedup_capacity=capacity), (1, 2, 3, capacity - 1))
+
     def setUp(self) -> None:
         codes = ((1, 2, 3, -1), (1, 2, 3, 0), (7, 8, 9, 2))
         keys = np.asarray([GnprIdIndex.pack(value) for value in codes], dtype=np.int64)
